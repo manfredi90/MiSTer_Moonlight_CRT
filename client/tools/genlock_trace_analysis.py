@@ -1,3 +1,5 @@
+# Analizza una traccia (traccia.csv): per ogni quadro ripetuto, l'immagine prima e dopo.
+# Uso: python3 genlock_trace_analysis.py traccia.csv
 import sys, bisect
 F=[];E=[]
 for line in open(sys.argv[1]):

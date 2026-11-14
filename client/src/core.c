@@ -923,17 +923,20 @@ static void guard_wait(bool idr, uint64_t *held_us, PDECODE_UNIT du) {
       else { target = e_next + 2 * P; hold_until = e_next + P + 200; }
     }
   }
-  /* il genlock: ogni immagine ha la sua presa (quella dopo v + D + margine). Arrivata
-   * prima della presa precedente (un'immagine piccola, o dopo una coda del Wi-Fi), sarebbe pronta un
-   * quadro prima e si scontrerebbe con la precedente (una scartata e una ripetuta): la si tiene fino
-   * a subito dopo la presa precedente. */
+  /* il genlock: ogni immagine ha la sua presa (quella dopo v + D + margine). Arrivata molto prima
+   * sarebbe pronta un quadro prima e si scontrerebbe con la precedente (una scartata, una ripetuta):
+   * la si trattiene, ma solo fino a 0,25 us per byte meno 1 ms PRIMA della presa precedente (un
+   * limite basso del suo tempo di decodifica), non fino a dopo quella presa: così un'immagine grande
+   * ha più di un quadro per decodificarsi. Sulla traccia del 14/11 (3 min, Wi-Fi), rigiocata con il
+   * tempo di decodifica stimato dalla traccia stessa (5 modelli): da 70-80 ripetute a 1-8, nessuno
+   * scontro; trattenere fino a dopo la presa precedente era la causa di quasi tutte (le immagini
+   * sopra 19 KB vogliono più di 15,7 ms). client/tools/genlock_replay.py */
   if (g.gl_state == 2 && g.fll_done && have_v) {
     double tr = v_abs + g.D + g.q + 500;
     double ei = e0 + ceil((tr - e0) / P) * P;
-    /* 1 ms dopo la presa stimata: con 200 us (la stima vale +-0,5 ms) un'immagine su 600 veniva
-     * rilasciata appena PRIMA della presa e la perdeva (traccia del 14/11: 17 ripetute su 81) */
-    if (w < ei - P + 1000 && ei - P + 1000 - w < P)
-      hold_until = ei - P + 1000;
+    double rel = ei - P - (0.25 * du->fullLength - 1000);
+    if (w < rel && rel - w < P)
+      hold_until = rel;
   }
   double tr_e = g.gl_err, tr_tg = g.gl_target, tr_q = g.q, tr_D = g.D;
   int tr_trim = g.gl_trim_sent;
