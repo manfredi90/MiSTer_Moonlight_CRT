@@ -355,7 +355,8 @@ WORDS = [
                  ("fit_oh", 48, 13, "... height (frame lines)")]),
     (31, "sys", [("seq_tail", 0, 32, "the status sequence again: read FIRST (equal to seq_head = a consistent copy)"),
                  ("geometry_ack_seq", 32, 8, "(1.2) calibrated picture rectangle request sequence consumed; 0 before a request"),
-                 ("geometry_error", 40, 2, "(1.2) 0 applied, 1 range error, 2 reserved bits set; 3 reserved")]),
+                 ("geometry_error", 40, 2, "(1.2) 0 applied, 1 range error, 2 reserved bits set; 3 reserved"),
+                 ("tm_now", 42, 22, "(mm 1.5) the same clk_sys cycle count >> 10 when this status was written: maps tm_start / tm_emit to the program's clock")]),
     # 0.5: the core's second region, written between words 16-23 and 24-31 (before seq_tail)
     (40, "sys", [("aud_state", 0, 2, "(0.5) audio: 0 idle (nothing queued), 1 armed (queued, waiting to start), 2 playing"),
                  ("aud_ll", 2, 1, "(0.5) audio follows the low-latency rule (the stream's LOW_LATENCY), else paced by the STC"),
@@ -381,7 +382,7 @@ WORDS = [
                  ("pll_state", 27, 4, "(mm 1.5) vid_pll_tune's state (diagnostics: 1 waiting, 2-4 reading M / K, 7 idle, 8-9 writing)"),
                  ("pll_wait", 31, 1, "(mm 1.5) waitrequest was high at vid_pll_tune's last write (diagnostics)"),
                  ("pll_fixed", 7, 1, "(mm 1.5) vid_pll_tune uses the M / K the Fitter reported (the read-back gave nothing)"),
-                 ("pll_k", 32, 32, "(mm 1.5) the video PLL's delta-sigma K last written; before pll_ok, {the OR of every read's data, the M read} (diagnostics)")]),
+                 ("tm_start", 32, 32, "(mm 1.5) clk_sys (27 MHz) cycle count when the front end began the last picture (fe_pic changed): with tm_emit, the decode time")]),
     # 0.9: the overlay plane's status (docs/architecture.md "The overlay plane")
     (46, "sys", [("ovl_gen", 0, 32, "(0.9) the overlay: the generation of the last consistent descriptor read"),
                  ("ovl_state", 32, 2, "(0.9) 0 off, 1 accepted (shown while a session is open), 2 refused"),
@@ -418,7 +419,8 @@ WORDS = [
                  ("cap_pic_stores", 24, 8, "(0.15) the stores a picture stream may use: DPB_STORES (a 0.14 core reads 0)"),
                  ("pic_emitted", 32, 32, "(0.15) PICTURE records emitted to the display since the PLL lock (wrapping): with pic_held, the store rule")]),
     # 0.15: the display's field alignment (docs/analog.md §5)
-    (85, "sys", [("disp_fhold", 0, 32, "(0.15) 480i / 576i: field pairs held one refresh so that each starts on the raster field of its first field (reset per stream, as disp_late)")]),
+    (85, "sys", [("disp_fhold", 0, 32, "(0.15) 480i / 576i: field pairs held one refresh so that each starts on the raster field of its first field (reset per stream, as disp_late)"),
+                 ("tm_emit", 32, 32, "(mm 1.5) clk_sys (27 MHz) cycle count when the last picture was emitted to the display (out_emit changed): decoded, ready for a pickup")]),
     # 0.16: the colour (docs/architecture.md "The colour (interface 0.16)", docs/colour.md)
     (86, "sys", [("vui_matrix", 0, 8, "(0.16) the shown picture's SPS matrix_coefficients as coded (2 when absent; a program's picture 2)"),
                  ("vui_primaries", 8, 8, "(0.16) ... colour_primaries (2 when absent)"),

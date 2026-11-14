@@ -230,7 +230,7 @@ assign LOCKED    = locked & vid_locked;
 //     stock Main truncates the About line at 30 chars and splits CONF_STR on , and ;.
 //   * This string is INSIDE CONF_STR = inside the netlist, so changing it re-rolls the
 //     fit. Set it before the build that will ship, not after.
-`define CORE_VERSION "mm-0.3.5-genlock-pll"
+`define CORE_VERSION "mm-0.3.6-genlock-pll"
 
 // The OSD definition. Every option, button and file extension here MUST be documented
 // in the manual: tools/docs_check.py parses this block (by its terminator, never a
@@ -1975,6 +1975,21 @@ wire [12:0] st_fit_ow       = sh_valid ? fit_ow : 13'd0;
 wire [12:0] st_fit_oh       = sh_valid ? fit_oh : 13'd0;
 wire [12:0] st_pic_x0       = sh_valid ? fit_ox0[12:0] : 13'd0;   // two's complement (>= -3,736: ow <= 8,191)
 wire [12:0] st_pic_y0       = sh_valid ? fit_oy0[12:0] : 13'd0;
+// (mm 1.5) THE DECODE'S TIMING, for the program's trace: a free 27 MHz count on clk_sys, latched when
+// the front end begins a picture (fe_pic's bit 0 toggles, clk_dec) and when recon_out emits one to the
+// display (out_emit's, clk_dec): their difference is the picture's decode time; tm_now (>> 10) in
+// each status maps them to the program's clock. A single toggling bit crosses safely (pictures are
+// milliseconds apart; two within three cycles would be counted as one).
+logic [31:0] tm27, tm_start, tm_emit;
+logic [2:0]  tm_fp_s, tm_oe_s;
+always_ff @(posedge clk_sys) begin
+	tm27    <= tm27 + 32'd1;
+	tm_fp_s <= {tm_fp_s[1:0], fe_pic[0]};
+	tm_oe_s <= {tm_oe_s[1:0], out_emit[0]};
+	if (tm_fp_s[2] ^ tm_fp_s[1]) tm_start <= tm27;
+	if (tm_oe_s[2] ^ tm_oe_s[1]) tm_emit  <= tm27;
+end
+
 ring_words_sys ring_words_sys_inst (
 	.ix               (st_sys_ix),
 	.f_seq_head       (st_seq),
@@ -2057,7 +2072,9 @@ ring_words_sys ring_words_sys_inst (
 	.f_gl_en          (ctl_gl_en),
 	.f_pll_ok         (vt_ok_s),           // (mm 1.5) vid_pll_tune's state, crossed from CLK_50M
 	.f_pll_moving     (vt_moving_s),
-	.f_pll_k          (vt_k_s),
+	.f_tm_start       (tm_start),          // (mm 1.5) the decode's timing, on clk_sys (below)
+	.f_tm_emit        (tm_emit),
+	.f_tm_now         (tm27[31:10]),
 	.f_pll_state      (vt_st_s),
 	.f_pll_wait       (vt_ws_ss[1]),
 	.f_pll_fixed      (vt_fx_ss[1]),

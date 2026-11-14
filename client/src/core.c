@@ -141,7 +141,8 @@ static void tr_begin(void) {
   if (!tr_buf) { tr_cap = 12u << 20; tr_buf = malloc(tr_cap); }
   tr_on = tr_buf != NULL;
   tr_printf("# tipo F (immagine): w_us,recv_us,rtp,byte,idr,phv,errore,obiettivo,margine,D,trim,agganciato,trattenuta_us,v_us\n"
-            "# tipo E (inizio quadro del core): s_us,seq,prese,scartate,ripetute,Pm_us,t_ref_us,eoff_us\n");
+            "# tipo E (inizio quadro del core): s_us,seq,prese,scartate,ripetute,Pm_us,t_ref_us,eoff_us,"
+            "tm_now (27 MHz >> 10),tm_start (27 MHz),tm_emit (27 MHz),immagini iniziate,immagini emesse\n");
 }
 static void tr_end(void) {
   if (!tr_on || !tr_len)
@@ -434,9 +435,11 @@ static void pace_wait(uint64_t *held_us, bool *forced) {
 #define G_D0_US       10500.0     /* D iniziale: 1.200 macroblocchi a ~110.000 al secondo */
 #define G_D_MIN_US    5000.0
 #define G_D_MAX_US    15000.0     /* la guardia (le sue zone suppongono D < un quadro) */
-#define G_D_MAX_GL_US 22000.0     /* il genlock: le immagini grandi (oltre 19 KB) vogliono più di
-                                   * 16 ms; con 15 il genlock dava loro 14-18 ms e i 4/5 delle
-                                   * ripetute dopo l'aggancio erano loro (tracce del 14/11) */
+#define G_D_MAX_GL_US 15000.0     /* il genlock: con 22 ms (per dare tempo alle immagini grandi) D
+                                   * saliva al massimo nella raffica d'avvio e le immagini piccole,
+                                   * pronte in pochi ms, si scontravano (traccia 4 del 14/11): torna
+                                   * a 15 finché i tempi di decodifica misurati dal core non dicono
+                                   * di più */
 static struct {
   pthread_t th;
   volatile bool run;
@@ -593,9 +596,9 @@ static void *guard_thread(void *arg) {
         g.pick = pick;
         g.starve = starve;
         g.have_snap = true;
-        if (g.gl_state == 2)
-          tr_printf("E,%.0f,%u,%u,%u,%u,%.1f,%.0f,%.0f\n", s, seq, pick, (uint32_t)H264RING_ST(&st, DISP_SKIP), starve,
-                    g.Pm, g.t_ref, g.eoff);
+        tr_printf("E,%.0f,%u,%u,%u,%u,%.1f,%.0f,%.0f,%u,%u,%u,%u,%u\n", s, seq, pick, (uint32_t)H264RING_ST(&st, DISP_SKIP), starve,
+                    g.Pm, g.t_ref, g.eoff, (unsigned)(st.w[31] >> 42), (unsigned)(st.w[45] >> 32), (unsigned)(st.w[85] >> 32),
+                    (unsigned)(st.w[15] & 0xffffffffu), (unsigned)(st.w[23] >> 32));
         /* il genlock: il core lo applica? (parola 45: [24] GL_EN applicato, [1] parola 34 rifiutata) */
         g.w45 = st.w[45];
         /* 480i <-> 240p dall'OSD: la presa cade altrove nel quadro e il raster riparte con un'altra
@@ -651,7 +654,7 @@ static void *guard_thread(void *arg) {
 static void guard_start(void) {
   if ((!guard_on && !genlock_req) || g.th_ok)
     return;
-  if (rt.on && genlock_req) tr_begin(); else tr_on = false;
+  if (rt.on) tr_begin(); else tr_on = false;      /* -stats: la traccia, col genlock o con la guardia */
   mg_core_info ci;
   mg_core_get_info(&ci);
   pthread_mutex_lock(&g.mx);
@@ -968,8 +971,8 @@ static void guard_wait(bool idr, uint64_t *held_us, PDECODE_UNIT du) {
     }
     *held_us = (uint64_t)((double)now_us() - w);
   }
-  if (tr_gl)
-    tr_printf("F,%.0f,%llu,%u,%d,%d,%.0f,%.0f,%.0f,%.0f,%.0f,%d,%d,%llu,%.0f\n", w, (unsigned long long)du->receiveTimeUs,
+  (void)tr_gl;
+  tr_printf("F,%.0f,%llu,%u,%d,%d,%.0f,%.0f,%.0f,%.0f,%.0f,%d,%d,%llu,%.0f\n", w, (unsigned long long)du->receiveTimeUs,
               rtp, du->fullLength, idr, have_v ? phv : -1.0, tr_e, tr_tg, tr_q, tr_D, tr_trim, tr_lk,
               (unsigned long long)*held_us, v_abs);
   pthread_mutex_lock(&g.mx);
@@ -998,12 +1001,11 @@ static void guard_report(void) {
            g.q / 1000, g.mad / 1000, g.D / 1000, (g.D + g.q + 500) / 1000,
            g.gl_trim, g.gl_integ, g.Pm > 0 ? 1e6 / g.Pm : 0.0, g.misses);
   if (g.gl_state == 2 || g.gl_pll_fail)
-    printf("[genlock] PLL video: %s%s%s, stato %u%s, %s 0x%08x\n",
+    printf("[genlock] PLL video: %s%s%s, stato %u%s\n",
            (g.w45 >> 25) & 1 ? "letto" : "NON letto (il core non lo muove)",
            (g.w45 >> 7) & 1 ? " (valori fissi del Fitter: la lettura non ha dato niente)" : "",
            (g.w45 >> 26) & 1 ? ", in movimento" : "", (unsigned)(g.w45 >> 27) & 15u,
-           (g.w45 >> 31) & 1 ? ", waitrequest alto" : "",
-           (g.w45 >> 25) & 1 ? "K" : "letture (OR, M)", (unsigned)(g.w45 >> 32));
+           (g.w45 >> 31) & 1 ? ", waitrequest alto" : "");
   else
     printf("[guardia] arrivi a %.1f ms dalla presa (dispersione %.1f ms), decodifica %.1f ms, taglio a %.1f ms (%s); "
            "%u trattenute (media %.1f ms), %u mancate, %u cambi di taglio\n",
