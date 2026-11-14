@@ -930,8 +930,10 @@ static void guard_wait(bool idr, uint64_t *held_us, PDECODE_UNIT du) {
   if (g.gl_state == 2 && g.fll_done && have_v) {
     double tr = v_abs + g.D + g.q + 500;
     double ei = e0 + ceil((tr - e0) / P) * P;
-    if (w < ei - P + 200 && ei - P + 200 - w < P)
-      hold_until = ei - P + 200;
+    /* 1 ms dopo la presa stimata: con 200 us (la stima vale +-0,5 ms) un'immagine su 600 veniva
+     * rilasciata appena PRIMA della presa e la perdeva (traccia del 14/11: 17 ripetute su 81) */
+    if (w < ei - P + 1000 && ei - P + 1000 - w < P)
+      hold_until = ei - P + 1000;
   }
   double tr_e = g.gl_err, tr_tg = g.gl_target, tr_q = g.q, tr_D = g.D;
   int tr_trim = g.gl_trim_sent;
