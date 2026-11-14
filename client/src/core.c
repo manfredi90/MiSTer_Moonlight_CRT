@@ -433,7 +433,10 @@ static void pace_wait(uint64_t *held_us, bool *forced) {
 #define G_MARGIN_US   1000.0
 #define G_D0_US       10500.0     /* D iniziale: 1.200 macroblocchi a ~110.000 al secondo */
 #define G_D_MIN_US    5000.0
-#define G_D_MAX_US    15000.0
+#define G_D_MAX_US    15000.0     /* la guardia (le sue zone suppongono D < un quadro) */
+#define G_D_MAX_GL_US 22000.0     /* il genlock: le immagini grandi (oltre 19 KB) vogliono più di
+                                   * 16 ms; con 15 il genlock dava loro 14-18 ms e i 4/5 delle
+                                   * ripetute dopo l'aggancio erano loro (tracce del 14/11) */
 static struct {
   pthread_t th;
   volatile bool run;
@@ -576,7 +579,7 @@ static void *guard_thread(void *arg) {
               double slack = g.pend[i].ev - g.pend[i].wr;   /* il tempo che aveva per decodificarsi */
               if (starved && !picked) {
                 g.misses++;
-                if (!g.pend[i].idr && slack + 500 > g.D) g.D = fmin(G_D_MAX_US, slack + 500);
+                if (!g.pend[i].idr && slack + 500 > g.D) g.D = fmin(g.gl_state == 2 ? G_D_MAX_GL_US : G_D_MAX_US, slack + 500);
               } else if (picked) {
                 g.hits++;
                 if (!g.pend[i].idr && slack < g.D + 2000) g.D = fmax(G_D_MIN_US, g.D - (g.gl_state == 2 ? 1 : 5));
@@ -661,6 +664,7 @@ static void guard_start(void) {
   g.mad = 0;
   g.arrivals = 0;
   if (g.D < G_D_MIN_US) g.D = G_D0_US;   /* resta tra uno stream e l'altro */
+  if (!genlock_req && g.D > G_D_MAX_US) g.D = G_D_MAX_US;   /* dopo un genlock: la guardia vuole D < un quadro */
   g.mode = 0;
   g.good_run = 0;
   g.npend = 0;
@@ -917,7 +921,10 @@ static void guard_wait(bool idr, uint64_t *held_us, PDECODE_UNIT du) {
    * che va tutta alla presa successiva */
   double c = g.mode == 0 ? d : g.fixed_cut;
   g.cut = c;
-  double hold_until = 0, target = a < d ? e_next : e_next + P;
+  /* la presa attesa: la prima dopo che l'immagine è pronta (a + D; col genlock D può superare un
+   * quadro: con "a < d ? e_next : e_next + P" un'immagine pronta dopo due prese contava come
+   * mancata e D saliva da sé fino al massimo) */
+  double hold_until = 0, target = w - a + ceil((a + g.D) / P) * P;
   if (g.mode == 1) {
     if (c <= d) {
       if (a < c) target = e_next;
