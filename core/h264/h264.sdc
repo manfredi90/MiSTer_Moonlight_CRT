@@ -154,3 +154,10 @@ set_max_delay -from [get_keepers {*pic_in:*|pd_busy*}] -to [get_keepers {*ring_r
 
 # OSD level enters the video domain through a two-flop synchronizer.
 set_false_path -to [get_registers {*|disp_reader_inst|gd_sync1}]
+
+# (mm 1.5) the decode's timing: fe_pic[0] / recon_out's n_emit[0] (clk_dec) into two-flop synchronizers
+# on clk_sys (emu's tm_fp_s / tm_oe_s). A single bit toggling once per picture (milliseconds apart):
+# bounded like the other toggles, the 27 MHz count it latches is diagnostics.
+set_max_delay -from [get_keepers {*|pic_count[0]* *|n_emit[0]*}] \
+              -to [get_keepers {*tm_fp_s[0]* *tm_oe_s[0]*}] 12.000
+set_false_path -hold -to [get_keepers {*tm_fp_s[0]* *tm_oe_s[0]*}]
