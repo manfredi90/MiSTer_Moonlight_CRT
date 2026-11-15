@@ -93,6 +93,8 @@ module disp_ctl (
     // the queue's head (h264/recon_out.sv)
     input  wire         rec_valid,
     input  wire         rec_more,          // recon_out: another picture waits behind the head
+    input  wire         rec_more2,         // (mm 1.5) ... two pictures wait behind it
+    input  wire         gl_lag,            // (mm 1.5) GL_LAG: one picture of reserve (skip on rec_more2)
     input  wire         low_lat,           // the stream's LOW_LATENCY (a level, stable per stream)
     input  wire         pause,             // (0.5) word 34's PAUSE: the STC and the display stand still
     input  wire         aanc,              // (0.5) the audio anchor (aud_play)
@@ -364,7 +366,9 @@ module disp_ctl (
         end else begin
             rec_take <= 1'b0; rel_valid <= 1'b0;
             // low latency: a head a newer picture waits behind is dropped unseen (line 490)
-            if (sk_pulse && low_lat && have_cur && rec_valid && !rec_end && prep && !ended && rec_more) begin
+            // (mm 1.5) GL_LAG: one decoded picture may wait (a reserve against slow decodes, with the
+            // genlock keeping the rates equal): the head is dropped only when two wait behind it
+            if (sk_pulse && low_lat && have_cur && rec_valid && !rec_end && prep && !ended && (gl_lag ? rec_more2 : rec_more)) begin
                 rec_take <= 1'b1; rel_valid <= 1'b1; rel_store <= rec_store;
                 n_skip <= n_skip + 32'd1;
             end

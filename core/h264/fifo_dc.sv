@@ -42,7 +42,9 @@ module fifo_dc #(
     output logic [DW-1:0] dout,
     input  wire          rd_en,
     output logic         empty,
-    output logic         valid          // dout holds the word popped in the previous cycle
+    output logic         valid,         // dout holds the word popped in the previous cycle
+    output logic [AW:0]  rd_used        // (mm) words waiting as the read side sees them (pessimistic:
+                                        //   the write pointer arrives two flops late)
 );
 
     logic [DW-1:0] mem [0:(1<<AW)-1];
@@ -82,16 +84,22 @@ module fifo_dc #(
         if (wr_en && !full) mem[wbin[AW-1:0]] <= din;
 
     // ---- read side -------------------------------------------------------------------
+    // (mm) the synchronised write pointer back in binary, for rd_used
+    logic [AW:0] rq2_wbin;
+    always_comb begin
+        rq2_wbin[AW] = rq2_wgray[AW];
+        for (int i = AW - 1; i >= 0; i--) rq2_wbin[i] = rq2_wbin[i + 1] ^ rq2_wgray[i];
+    end
     wire  [AW:0] rbin_nx  = rbin + {{AW{1'b0}}, (rd_en && !empty)};
     wire  [AW:0] rgray_nx = (rbin_nx >> 1) ^ rbin_nx;
     wire         empty_nx = (rgray_nx == rq2_wgray);
 
     always_ff @(posedge rd_clk or negedge rd_rst_n) begin
         if (!rd_rst_n) begin
-            rbin <= '0; rgray <= '0; empty <= 1'b1; valid <= 1'b0;
+            rbin <= '0; rgray <= '0; empty <= 1'b1; valid <= 1'b0; rd_used <= '0;
             rq1_wgray <= '0; rq2_wgray <= '0;
         end else begin
-            rbin <= rbin_nx; rgray <= rgray_nx; empty <= empty_nx;
+            rbin <= rbin_nx; rgray <= rgray_nx; empty <= empty_nx; rd_used <= rq2_wbin - rbin_nx;
             rq1_wgray <= wgray; rq2_wgray <= rq1_wgray;
             valid <= rd_en && !empty;
         end

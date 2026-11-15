@@ -112,10 +112,10 @@ enum { ST_CONNECT, ST_PAIR, ST_MAIN, ST_MESSAGE, ST_PCS, ST_PCOPT, ST_EDIT };
 enum { IT_APP, IT_HEADER, IT_BITRATE, IT_AUDIO, IT_QUITAFTER, IT_SYNC,
        IT_QUITAPP, IT_REFRESH, IT_EXIT, IT_PCS };
 
-/* la sincronizzazione col PC: il genlock (il core segue gli arrivi, nessun quadro in più), la
- * guardia (un'immagine a ridosso della presa va alla successiva: fino a un quadro in più), nessuna */
-enum { SYNC_GENLOCK, SYNC_GUARD, SYNC_NONE, N_SYNC };
-static const char *sync_names[N_SYNC] = { "genlock", "guardia", "nessuna" };
+/* la sincronizzazione col PC: il genlock (il core segue gli arrivi, nessun quadro in più), il
+ * genlock +1 (lo stesso, e il core tiene un'immagine di riserva: un quadro in più), la guardia (un'immagine a ridosso della presa va alla successiva: fino a un quadro in più), nessuna */
+enum { SYNC_GENLOCK, SYNC_GENLOCK_LAG, SYNC_GUARD, SYNC_NONE, N_SYNC };
+static const char *sync_names[N_SYNC] = { "genlock", "genlock +1", "guardia", "nessuna" };
 static int sync_mode;
 
 /* i PC con Sunshine (salvati in menu.cfg come pc=indirizzo|nome) */
@@ -806,7 +806,8 @@ static void launch(int app) {
   draw_starting(apps[app].name);
   present();
   char msg[200];
-  opt->genlock = sync_mode == SYNC_GENLOCK;
+  opt->genlock = sync_mode == SYNC_GENLOCK || sync_mode == SYNC_GENLOCK_LAG;
+  opt->gl_lag = sync_mode == SYNC_GENLOCK_LAG;
   opt->guard = sync_mode == SYNC_GUARD;
   printf("[menu] avvio %s (sincronizzazione: %s)\n", apps[app].name, sync_names[sync_mode]);
   int r = mg_stream_session(&server, opt, apps[app].id, msg, sizeof(msg));
@@ -816,12 +817,16 @@ static void launch(int app) {
   mg_input_set_mode(MG_INPUT_MENU);
   if (r != 0) {
     show_message("Avvio non riuscito", msg, "", false);
-  } else if (sync_mode == SYNC_GENLOCK && mg_core_genlock_problem()[0]) {
+  } else if (opt->genlock && mg_core_genlock_problem()[0]) {
     /* il genlock chiesto non ha lavorato: lo stream era senza sincronizzazione, va detto */
     char l1[240];
     snprintf(l1, sizeof(l1), "Il genlock non ha funzionato: %s.", mg_core_genlock_problem());
     show_message("Genlock non attivo", l1,
                  "Lo stream era senza sincronizzazione. Per ora scegli Sincronizzazione: guardia nelle impostazioni.", false);
+  } else if (opt->gl_lag && mg_core_gl_lag_problem()[0]) {
+    char l1[240];
+    snprintf(l1, sizeof(l1), "La riserva non ha funzionato: %s.", mg_core_gl_lag_problem());
+    show_message("Genlock +1 non attivo", l1, "Lo stream era col genlock semplice (senza il quadro in più).", false);
   } else {
     state = ST_MAIN;
     if (msg[0]) set_status(msg, C_DIM);
@@ -942,7 +947,7 @@ int mg_menu_run(options *o, const char *kd) {
     snprintf(cfg_path, sizeof(cfg_path), "menu.cfg");
   }
   /* la sincronizzazione: da menu.cfg se c'è (sync=), se no dalle opzioni (-genlock, -guard) */
-  sync_mode = o->genlock ? SYNC_GENLOCK : o->guard ? SYNC_GUARD : SYNC_NONE;
+  sync_mode = o->genlock ? (o->gl_lag ? SYNC_GENLOCK_LAG : SYNC_GENLOCK) : o->guard ? SYNC_GUARD : SYNC_NONE;
   if (!o->no_menu_cfg)
     cfg_load();
   /* il core è a 640 pixel e 60 Hz: dal menu sempre 640x480 a 60 immagini al secondo */

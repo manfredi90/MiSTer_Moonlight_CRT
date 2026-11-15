@@ -260,6 +260,9 @@ int  h264ring_set_atten(h264ring *r, unsigned half_db);
  * faster by trim x 2^-16, -127..127 (the core glides there); status word 45 [24] GL_EN applied,
  * [23:16] the trim applied */
 int  h264ring_set_genlock(h264ring *r, int en, int trim);
+/* (mm 1.5) GL_LAG: one decoded picture kept in reserve (a frame of latency, no repeat when one
+ * picture decodes late); status word 45 [2] applied */
+int  h264ring_set_gl_lag(h264ring *r, int on);
 
 /* ---- the pads' rumble (interface 0.13: program words 36-38, status words 82-83) ----
  * Main plays it on the user's pad: pad n is Main's player n + 1 (the input region's pad n). Two

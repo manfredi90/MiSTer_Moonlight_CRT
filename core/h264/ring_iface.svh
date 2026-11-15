@@ -16,7 +16,8 @@ localparam logic [7:0] RI_CTL_PAUSE_BIT = 8'h0;   // pause word: the PAUSE level
 localparam logic [7:0] RI_CTL_ATTEN_LSB = 8'h8;   // pause word: ATTEN [15:8], 0.5 dB steps (0 full volume, 255 mute)
 localparam logic [7:0] RI_CTL_GL_TRIM_LSB = 8'h10;   // (mm 1.5) pause word: GL_TRIM [23:16], signed: the raster's pixel clock slower (+) or faster (-) by GL_TRIM x 2^-16 while GL_EN
 localparam logic [7:0] RI_CTL_GL_EN_BIT = 8'h18;   // (mm 1.5) pause word: GL_EN, the genlock: the raster's frequency follows GL_TRIM, gliding (during a session)
-localparam logic [31:0] RI_CTL_RESERVED = 32'hFE0000FE;   // pause word: the bits that must be 0 (a word with one set is refused whole)
+localparam logic [7:0] RI_CTL_GL_LAG_BIT = 8'h19;   // (mm 1.5) pause word: GL_LAG, one picture of reserve: low latency skips a head only when TWO pictures wait behind it (during a session)
+localparam logic [31:0] RI_CTL_RESERVED = 32'hFC0000FE;   // pause word: the bits that must be 0 (a word with one set is refused whole)
 localparam logic [7:0] RI_W_SETTINGS = 8'h23;   // program (0.4): the settings request (u32, low half: values, mask, seq)
 localparam logic [7:0] RI_REQ_MASK_LSB = 8'hD;   // settings request: the mask's first bit (one bit an option, in the mirror's order)
 localparam logic [7:0] RI_REQ_SEQ_LSB = 8'h18;   // settings request: the sequence number [31:24] (0 = no request)

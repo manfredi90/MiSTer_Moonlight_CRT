@@ -313,6 +313,7 @@ module ring_rd_tb;
         .f_rum_p4(rumble[79:64]), .f_rum_p5(rumble[95:80]), .f_rum_changes(rum_changes),
         .f_pic_held(pic_held_s), .f_pic_mode(pic_mode), .f_pic_emitted(pic_emitted_s),     // 0.15: word 84
         .f_disp_fhold(32'd0),                                                            // 0.15: word 85 (no display here)
+        .f_tm_emit(32'd0), .f_tm_start(32'd0), .f_tm_now(22'd0), .f_gl_lag(1'b0),           // mm 1.5: no display here
         // 0.16: word 86, distinct constants but the stream's own (ring_rd's override and mismatch count)
         .f_vui_matrix(8'hD1), .f_vui_primaries(8'hD2), .f_vui_transfer(8'hD3), .f_vui_full_range(1'b1),
         .f_vui_colour_present(1'b0), .f_colour_override(colour_mode != 3'd0), .f_colour_unsup(16'hD004),

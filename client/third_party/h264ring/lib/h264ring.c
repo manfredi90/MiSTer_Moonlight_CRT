@@ -874,6 +874,17 @@ int h264ring_set_genlock(h264ring *r, int en, int trim)
     return 0;
 }
 
+/* (MiSTer Moonlight, interface mm 1.5) GL_LAG [25]: with the genlock, the core keeps one decoded
+ * picture in reserve (it drops the head only when two wait behind it). Kept in r->ctl too. */
+int h264ring_set_gl_lag(h264ring *r, int on)
+{
+    if (!r)
+        return -EINVAL;
+    r->ctl = (r->ctl & ~(1u << 25)) | (on ? (1u << 25) : 0u);
+    ctrl_lo_store(r, H264RING_W_PAUSE, r->ctl);
+    return 0;
+}
+
 /* ---- the rumble (interface 0.13, program words 36-38: two pads a u32, {large, small}) ---- */
 static void rum_write(h264ring *r, unsigned pad, uint16_t v)
 {

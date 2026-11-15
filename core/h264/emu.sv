@@ -143,6 +143,7 @@ sys_pll sys_pll (
 wire clk_vid, clk_vid_dv, vid_locked;
 wire [63:0] vid_reconfig_to_pll, vid_reconfig_from_pll;   // (mm) the raster's frequency, finely
 wire        ctl_gl_en;                   // (mm 1.5) the genlock (word 34's GL_EN, during a session; ring_rd)
+wire        ctl_gl_lag;                  // (mm 1.5) word 34's GL_LAG: one picture of reserve (disp_ctl)
 wire  [7:0] ctl_gl_trim;                 // ... its trim: the raster's frequency in 2^-16, signed, + slower
 vid_pll vid_pll (
 	.refclk   (CLK_50M),
@@ -230,7 +231,7 @@ assign LOCKED    = locked & vid_locked;
 //     stock Main truncates the About line at 30 chars and splits CONF_STR on , and ;.
 //   * This string is INSIDE CONF_STR = inside the netlist, so changing it re-rolls the
 //     fit. Set it before the build that will ship, not after.
-`define CORE_VERSION "mm-0.3.6-genlock-pll"
+`define CORE_VERSION "mm-0.3.7-gl-lag"
 
 // The OSD definition. Every option, button and file extension here MUST be documented
 // in the manual: tools/docs_check.py parses this block (by its terminator, never a
@@ -516,6 +517,7 @@ ring_rd ring_rd_inst (
 	.ctl_err        (ctl_err),
 	.ctl_atten      (ctl_atten),
 	.ctl_gl_en      (ctl_gl_en),            // (mm 1.5) word 34's genlock
+	.ctl_gl_lag     (ctl_gl_lag),
 	.ctl_gl_trim    (ctl_gl_trim),
 	.rumble         (rumble),               // 0.13: program words 36-38, into hps_io
 	.rum_changes    (rum_changes),
@@ -1076,7 +1078,7 @@ wire [40:0] rq_crop;          // P6: the store's crop, to the fit (docs/analog.m
 wire [31:0] rq_nuit, rq_ts;
 wire  [3:0] rq_ps_a, rq_ps_b;
 wire [32:0] rq_pts, rq_pts_b;
-wire        rq_take, rl_valid, rq_more;
+wire        rq_take, rl_valid, rq_more, rq_more2;
 wire  [4:0] rl_store;
 wire [31:0] out_emit, out_rel;
 wire        out_ovf, out_rel_bad;
@@ -1119,6 +1121,7 @@ recon_out #(.NST(20)) recon_out_inst (
 	.srst_n         (fe_rst_n),
 	.rec_valid      (rq_valid),
 	.rec_more       (rq_more),
+	.rec_more2      (rq_more2),
 	.rec_take       (rq_take),
 	.rec_end        (rq_end),
 	.rec_store      (rq_store),
@@ -1197,6 +1200,8 @@ disp_ctl disp_ctl_inst (
 	.std            (raster_std),             // P6 steps 5 / 6: the refresh grid (59.94 / 60.00 / 50 Hz)
 	.rec_valid      (rq_valid),
 	.rec_more       (rq_more),                // P3f: another picture waits behind the head
+	.rec_more2      (rq_more2),               // (mm 1.5) two do (GL_LAG)
+	.gl_lag         (ctl_gl_lag),
 	.low_lat        (rr_ll),                  // the stream's LOW_LATENCY (the HPS interface's reader)
 	.pause          (ctl_pause),              // 0.5: word 34's PAUSE -- the STC and the display stand still
 	.aanc           (aud_anc),                // 0.5: the audio starts the STC (no picture has)
@@ -2070,6 +2075,7 @@ ring_words_sys ring_words_sys_inst (
 	.f_atten          (ctl_atten),
 	.f_gl_trim        (ctl_gl_trim),
 	.f_gl_en          (ctl_gl_en),
+	.f_gl_lag         (ctl_gl_lag),
 	.f_pll_ok         (vt_ok_s),           // (mm 1.5) vid_pll_tune's state, crossed from CLK_50M
 	.f_pll_moving     (vt_moving_s),
 	.f_tm_start       (tm_start),          // (mm 1.5) the decode's timing, on clk_sys (below)

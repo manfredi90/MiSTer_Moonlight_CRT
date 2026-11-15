@@ -165,6 +165,11 @@ static char gl_problem[200];           /* perché il genlock chiesto non ha lavo
 const char *mg_core_genlock_problem(void) { return gl_problem; }
 void mg_core_set_guard(bool on) { guard_on = on; }
 void mg_core_set_genlock(bool on) { genlock_req = on; }
+/* il genlock +1: il core tiene un'immagine di riserva (parola 34 [25], applicata: parola 45 [2]) */
+static bool gl_lag_req;
+static char gl_lag_problem[160];
+void mg_core_set_gl_lag(bool on) { gl_lag_req = on; }
+const char *mg_core_gl_lag_problem(void) { return gl_lag_problem; }
 
 static uint64_t now_us(void) {
   struct timespec ts;
@@ -452,6 +457,8 @@ static struct {
   uint64_t w45;                    /* l'ultima parola 45: [25] PLL letto, [26] in movimento, [63:32] K */
   bool gl_pll_fail;                /* il core non ha letto il suo PLL: il genlock è inutile, resta la guardia */
   double gl_stuck_t0;              /* da quando il core è fermo su una scrittura al PLL (0: non lo è) */
+  int gl_lag_st;                   /* la riserva: 0 non chiesta, 1 chiesta, 2 applicata, 3 rifiutata */
+  double gl_lag_t0;
   unsigned samples, outliers;
   /* il blocco di stato all'ultimo quadro */
   uint32_t pick, starve;
@@ -633,11 +640,33 @@ static void *guard_thread(void *arg) {
         } else {
           g.gl_stuck_t0 = 0;
         }
+        if (g.gl_lag_st == 1) {
+          if ((g.w45 >> 2) & 1) {
+            g.gl_lag_st = 2;
+            printf("[genlock] il core tiene un'immagine di riserva (un quadro in più)\n");
+          } else if (((g.w45 >> 1) & 1) || s - g.gl_lag_t0 > 1500000) {
+            g.gl_lag_st = 3;
+            snprintf(gl_lag_problem, sizeof(gl_lag_problem), "il core caricato non ha la riserva (genlock +1)");
+            printf("[genlock] %s: resta il genlock senza riserva\n", gl_lag_problem);
+            pthread_mutex_lock(&ring_mx);
+            if (ring) h264ring_set_gl_lag(ring, 0);
+            pthread_mutex_unlock(&ring_mx);
+          }
+        }
         if (g.gl_state == 1) {
           uint64_t w45 = st.w[45];
           if ((w45 >> 24) & 1) {
             g.gl_state = 2;
             printf("[genlock] il core lo applica\n");
+            /* la riserva solo ora: un core che non la conosce rifiuta tutta la parola 34 (e terrebbe
+             * fermo anche il trim), così il genlock è già applicato e la si toglie se rifiutata */
+            if (gl_lag_req) {
+              g.gl_lag_st = 1;
+              g.gl_lag_t0 = s;
+              pthread_mutex_lock(&ring_mx);
+              if (ring) h264ring_set_gl_lag(ring, 1);
+              pthread_mutex_unlock(&ring_mx);
+            }
           } else if (((w45 >> 1) & 1) || s - g.gl_t0 > 1500000) {
             g.gl_state = 3;    /* core senza genlock: si toglie la richiesta (la parola 34 sarebbe rifiutata) */
           }
@@ -685,6 +714,8 @@ static void guard_start(void) {
   g.d_ref = g.dmin = g.dmin_t = g.q = g.q_tgt = g.gl_bad_t0 = g.gl_phv = 0;
   g.xh_i = g.xh_n = g.xh_cnt = g.gl_good = 0;
   gl_problem[0] = 0;
+  gl_lag_problem[0] = 0;
+  g.gl_lag_st = 0;
   g.gl_stuck_t0 = 0;
   g.gl_trim = g.gl_trim_sent = 0;
   g.gl_integ = 0;
@@ -712,9 +743,10 @@ static void guard_stop(void) {
   if (g.gl_state) {
     /* fuori dallo stream il raster torna a 60,000 Hz esatti */
     pthread_mutex_lock(&ring_mx);
-    if (ring) h264ring_set_genlock(ring, 0, 0);
+    if (ring) { h264ring_set_genlock(ring, 0, 0); h264ring_set_gl_lag(ring, 0); }
     pthread_mutex_unlock(&ring_mx);
     g.gl_state = 0;
+    g.gl_lag_st = 0;
   }
 }
 
@@ -1000,6 +1032,8 @@ static void guard_report(void) {
            g.gl_locked ? "agganciato" : "aggancio", g.gl_phv / 1000, g.gl_target / 1000, g.gl_n ? g.gl_err_abs / g.gl_n / 1000 : 0.0,
            g.q / 1000, g.mad / 1000, g.D / 1000, (g.D + g.q + 500) / 1000,
            g.gl_trim, g.gl_integ, g.Pm > 0 ? 1e6 / g.Pm : 0.0, g.misses);
+  if (g.gl_lag_st)
+    printf("[genlock] riserva (genlock +1): %s\n", g.gl_lag_st == 2 ? "applicata" : g.gl_lag_st == 3 ? "rifiutata dal core" : "chiesta, mai applicata");
   if (g.gl_state == 2 || g.gl_pll_fail)
     printf("[genlock] PLL video: %s%s%s, stato %u%s\n",
            (g.w45 >> 25) & 1 ? "letto" : "NON letto (il core non lo muove)",
