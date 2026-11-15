@@ -13,10 +13,14 @@ if [ "$MENU" = 0 ] && [ -z "$HOST" ]; then
   echo "Imposta HOST (l'indirizzo del PC con Sunshine) in $D/mister_moonlight.conf"
   exit 1
 fi
-if ! ls /media/fat/_Other/H264_*.rbf >/dev/null 2>&1; then
-  echo "Core H264 non trovato: copia _Other/H264_*.rbf sulla SD"
-  exit 1
-fi
+# il core: MiSTer_moonlight/core/H264_*.rbf (o _Other/H264_*.rbf), salvo -core in EXTRA
+case " $EXTRA " in
+  *" -core "*) ;;
+  *) if ! ls /media/fat/MiSTer_moonlight/core/H264_*.rbf /media/fat/_Other/H264_*.rbf 2>/dev/null | grep -q .; then
+       echo "Core H264 non trovato: copia H264_*.rbf in MiSTer_moonlight/core sulla SD"
+       exit 1
+     fi ;;
+esac
 if pidof mister_moonlight >/dev/null; then
   echo "MiSTer Moonlight e' gia' in esecuzione"
   exit 1

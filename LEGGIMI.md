@@ -5,7 +5,8 @@ Client Moonlight per Sunshine sul MiSTer, con uscita sul core H264 (decoder H.26
 ## Installazione
 
 1. Copia sulla SD (in `/media/fat`) le cartelle `Scripts` e `MiSTer_moonlight` dello zip,
-   e il core H264 in `_Other` (`H264_*.rbf`).
+   e il core H264 (`H264_*.rbf`) in `MiSTer_moonlight/core`. Il core sta con Moonlight e non
+   in `_Other`: lanciato da solo dal menu del MiSTer darebbe solo uno schermo nero.
 2. Lancia **Scripts → mister_moonlight**: si apre l'elenco dei PC. Scegli *+ Aggiungi PC* e
    scrivi l'indirizzo IP del PC con Sunshine (tastiera a schermo col pad, o una tastiera vera),
    poi un nome. Se in `mister_moonlight.conf` c'è `HOST=...`, quel PC entra nell'elenco da solo.

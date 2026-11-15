@@ -32,7 +32,7 @@ Changes here:
   pickup (`-genlock`, `-genlock-lag`).
 - **The picture closes at its record's end (P3e).** On a LOW_LATENCY stream the reader's `es_au_end`
   crosses to the decoder, which closes the picture there instead of at the next picture's first slice.
-- The core is named H264 (`_Other/H264_*.rbf`), the pad's J line is upstream's twelve
+- The core is named H264 (`MiSTer_moonlight/core/H264_*.rbf` for the client, or `_Other`), the pad's J line is upstream's twelve
   Xbox-style buttons (the input region carries them as they are), the OSD's *Send Home to the
   program* and *Program menu* entries are back, `CORE_VERSION` is `mm-<version>`.
 

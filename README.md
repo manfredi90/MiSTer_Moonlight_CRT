@@ -28,8 +28,9 @@ raster follows the PC's own frame rate (genlock); the stock H264 core (480i at 5
 
 ## Install
 
-Copy the release zip's folders to the root of the SD card (`/media/fat`), together with the
-H264 core (`_Other/H264_*.rbf`), then run **Scripts → mister_moonlight**: the menu opens on
+Copy the release zip's folders to the root of the SD card (`/media/fat`), the H264 core
+(`H264_*.rbf`) into `MiSTer_moonlight/core` (not `_Other`: on its own, from the MiSTer's menu,
+it would only show a black screen; `_Other/H264` is still used when that folder is empty), then run **Scripts → mister_moonlight**: the menu opens on
 the list of PCs, where *+ Aggiungi PC* takes the Sunshine PC's IP address (on-screen keyboard
 or a real one); PCs can be renamed, re-addressed or removed there. `HOST` in
 `MiSTer_moonlight/mister_moonlight.conf` (created from `.conf.esempio` on the first run) is

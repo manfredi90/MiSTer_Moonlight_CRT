@@ -11,7 +11,8 @@ struct h264ring;
  * apre una sessione che resta aperta per tutta l'esecuzione: serve anche al
  * menu, perché il core mostra l'overlay solo durante una sessione. */
 int  mg_core_open(void (*on_gone)(void), void (*on_refused)(const char *why));
-/* Il file del core da caricare, senza data ed estensione (predefinito: _Other/H264) */
+/* Il file del core da caricare, senza data ed estensione (predefinito: MiSTer_moonlight/core/H264,
+ * se c'è, se no _Other/H264) */
 void mg_core_set_rbf(const char *rbf);
 /* Per i test: si collega a un ring già pronto (core finto in memoria) */
 int  mg_core_attach(struct h264ring *r, void (*on_gone)(void), void (*on_refused)(const char *why));

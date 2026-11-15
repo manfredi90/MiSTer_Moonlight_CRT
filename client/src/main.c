@@ -35,7 +35,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#define MG_VERSION "0.3.6"
+#define MG_VERSION "0.3.7"
 
 static sem_t quit_sem;
 static volatile bool stop_play;
@@ -155,7 +155,8 @@ static void usage(void) {
   printf("  -genlock           genlock: il core accorda la sua fase agli arrivi (core di questo repository)\n");
   printf("  -genlock-lag       genlock con un'immagine di riserva nel core (un quadro in più, come la guardia)\n");
   printf("  -pcres LxA         risoluzione del PC durante lo stream (Sunshine: risoluzione automatica)\n");
-  printf("  -core PERCORSO     il core da caricare, senza data ed estensione (predefinito _Other/H264)\n\n");
+  printf("  -core PERCORSO     il core da caricare, senza data ed estensione (predefinito\n"
+         "                     MiSTer_moonlight/core/H264, se no _Other/H264)\n\n");
   printf("Durante lo stream: Select+Start+LB+RB o Ctrl+Alt+Shift+Q tornano al menu,\n");
   printf("Select+Start = tasto Guide, Start tenuto 1 s = modalita' mouse.\n");
 }

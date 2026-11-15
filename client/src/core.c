@@ -31,6 +31,7 @@
 #include <opus_multistream.h>
 
 #include <errno.h>
+#include <glob.h>
 #include <math.h>
 #include <stdint.h>
 #include <pthread.h>
@@ -1556,15 +1557,25 @@ int mg_core_attach(h264ring *r, void (*on_gone)(void), void (*on_refused)(const 
   return rc;
 }
 
-static const char *core_rbf; /* NULL: _Other/H264 */
+static const char *core_rbf; /* NULL: MiSTer_moonlight/core/H264, se c'è, se no _Other/H264 */
 void mg_core_set_rbf(const char *rbf) { core_rbf = (rbf && *rbf) ? rbf : NULL; }
 
+/* il core sta con Moonlight (MiSTer_moonlight/core): nel menu del MiSTer, da solo, darebbe uno schermo
+ * nero e basta. _Other/H264 resta per chi l'ha messo lì */
+static const char *core_default(void) {
+  glob_t gb;
+  bool here = glob("/media/fat/MiSTer_moonlight/core/H264_*.rbf", 0, NULL, &gb) == 0 && gb.gl_pathc > 0;
+  globfree(&gb);
+  return here ? "MiSTer_moonlight/core/H264" : NULL;
+}
+
 int mg_core_open(void (*on_gone)(void), void (*on_refused)(const char *why)) {
+  if (!core_rbf) core_rbf = core_default();
   printf("[core] carico il core H264%s%s...\n", core_rbf ? " da " : "", core_rbf ? core_rbf : "");
   int rc = h264ring_launch_core(core_rbf, LAUNCH_MS);
   if (rc) {
     printf("[core] il core H264 non parte (%s): serve %s_*.rbf sulla SD\n", strerror(-rc),
-           core_rbf ? core_rbf : "_Other/H264");
+           core_rbf ? core_rbf : "MiSTer_moonlight/core/H264");
     return rc;
   }
   h264ring *r;
