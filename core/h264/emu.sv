@@ -231,7 +231,7 @@ assign LOCKED    = locked & vid_locked;
 //     stock Main truncates the About line at 30 chars and splits CONF_STR on , and ;.
 //   * This string is INSIDE CONF_STR = inside the netlist, so changing it re-rolls the
 //     fit. Set it before the build that will ship, not after.
-`define CORE_VERSION "mm-0.4.0"
+`define CORE_VERSION "mm-0.4.1"
 
 // The OSD definition. Every option, button and file extension here MUST be documented
 // in the manual: tools/docs_check.py parses this block (by its terminator, never a
@@ -254,7 +254,7 @@ assign LOCKED    = locked & vid_locked;
 // never changes when a program starts using the second (the Moonlight client: its menu, later).
 //
 // Legacy status positions remain allocated for the HPS settings API: [2:1] shape, [4:3]
-// deinterlace, [7] HDMI deinterlace, [9:8] legacy Analog Aspect (hidden), [16:15] Anti-Twitter mirror,
+// deinterlace, [7] HDMI deinterlace (no entry since mm-0.4.1: HDMI is Weave; 31kHz for HDMI), [9:8] legacy Analog Aspect (hidden), [16:15] Anti-Twitter mirror,
 // [17:18] program actions, [19] free (reserved). The display policy adds [22:20] profile,
 // [23] legacy match refresh (ignored), [24] playback 240p, [25] film speed,
 // [26] free (reserved), and [28:27] refresh-match mode. CONF_STR stays at v1 so existing
@@ -266,7 +266,6 @@ localparam CONF_STR = {
 	"O[22:20],Output Mode,15kHz,31kHz;",
 	"D2O[24],15kHz Mode,480i,240p;",
 	"O[2],Display Shape,4:3,16:9;",
-	"h0O[7],HDMI Deinterlace,Weave,Bob;",
 	"O[29],De-flicker,On,Off;",
 	"O[30],Gradient Dither,On,Off;",
 	"-;",
@@ -1781,7 +1780,7 @@ assign VGA_CS    = cs_smpte;
 assign VGA_CS_EN = cs_smpte_en;
 assign HDMI_FREEZE    = 1'b0;
 assign HDMI_BLACKOUT  = 1'b0;
-assign HDMI_BOB_DEINT = raster_il_eff & status[7];   // 480i on HDMI: ascal's Bob (else Weave)
+assign HDMI_BOB_DEINT = 1'b0;                         // 480i on HDMI: ascal's Weave (mm-0.4.1: no Bob entry)
 
 // =========================================================================
 // Aspect ratio presented to the scaler
@@ -2028,7 +2027,7 @@ ring_words_sys ring_words_sys_inst (
 	.f_osd_aspect     (status[2:1]),       // (interface 0.4) the OSD mirror, word 27: every option as the menu holds it
 	.f_osd_deint      (2'b00),
 	.f_osd_video_out  (status[6:5]),
-	.f_osd_hdmi_deint (status[7]),
+	.f_osd_hdmi_deint (1'b0),
 	.f_osd_analog_aspect (status[9:8]),
 	.f_osd_refresh    (status[12:11]),
 	.f_osd_anti_twitter (status[29] ? 2'd1 : 2'd2), // legacy mirror: Off=1, On=2

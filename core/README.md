@@ -14,19 +14,22 @@ Changes here:
   x2, no horizontal scaling. The display's grid (`h264/disp_ctl.sv`) is 450,000 clk_sys cycles
   for every mode; the fit (`h264/disp_fit.sv`) works on square pixels; the composite sync
   (`h264/csync_smpte.sv`) keeps the SMPTE pulse widths on the new line.
-- **No 50 Hz, no 59.94 Hz, no native HDMI raster, no refresh matching, no film speed.** Output Mode
+- **No 50 Hz, no native HDMI raster, no refresh matching, no film speed** (60.000 Hz without the
+  genlock, the PC's rate with it). Output Mode
   is 15kHz (480i) or 31kHz (480p); at 15kHz, 15kHz Mode 240p (upstream's 240p Playback) switches a
   playing stream to 240p. HDMI still gets the picture through the MiSTer scaler.
 - No *Deinterlace* entry: it only applies to field-coded streams, which Sunshine never sends (the
-  field path stays, at Weave).
-- **Genlock (interface mm 1.5).** Program word 34 gains GL_EN [24] and GL_TRIM [23:16] (lines per 64
-  refreshes, signed; status word 45 mirrors both). While GL_EN, `h264/sync_gen.sv` makes a refresh one
-  line longer or shorter by a sigma-delta on GL_TRIM: the refresh's second blank line (field line 241,
-  line 481 at 480p) is repeated or skipped -- after the overlay's first-blank-line event, before the
-  vertical sync and inside the SMPTE block's pre-equalizing segment -- so the line rate never changes and
-  the picture keeps its place under the vertical sync. `h264/disp_ctl.sv` re-anchors its refresh grid at
-  every refresh's first dot while GL_EN. The client steers the refresh phase so each picture is ready
-  just before its pickup (`-genlock`).
+  field path stays, at Weave). No *HDMI Deinterlace* entry either (mm-0.4.1): the scaler weaves 480i;
+  for HDMI, Output Mode 31kHz.
+- **Genlock (interface mm 1.5).** Program word 34 gains GL_EN [24], GL_TRIM [23:16] (signed, in
+  2^-16 of the pixel clock, positive = slower) and GL_LAG [25]; status word 45 mirrors them and the
+  PLL's state. While GL_EN, `h264/vid_pll_tune.sv` rewrites the video PLL's fractional divider
+  (`h264/vid_pll.sv`, a physical Cyclone V PLL so its reconfiguration ports exist), gliding a quarter
+  unit every 10 ms: the raster keeps its lines and lengths, the whole refresh runs at the PC's rate.
+  GL_LAG keeps one decoded picture in reserve (`h264/disp_ctl.sv` drops the head only when two wait
+  behind it): one frame of latency, no repeat when a large picture decodes late. The client measures
+  the PC's rate from the RTP timestamps and steers the phase so each picture is ready just before its
+  pickup (`-genlock`, `-genlock-lag`).
 - **The picture closes at its record's end (P3e).** On a LOW_LATENCY stream the reader's `es_au_end`
   crosses to the decoder, which closes the picture there instead of at the next picture's first slice.
 - The core is named H264 (`_Other/H264_*.rbf`), the pad's J line is upstream's twelve
