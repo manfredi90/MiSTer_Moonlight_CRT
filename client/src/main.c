@@ -136,7 +136,7 @@ static void usage(void) {
   printf("Options:\n");
   printf("  -app <name>        Sunshine app (default: Desktop)\n");
   printf("  -width <n> -height <n>  resolution asked of Sunshine (default 640x480)\n");
-  printf("  -bitrate <kbps>    bitrate (default 10000)\n");
+  printf("  -bitrate <kbps>    bitrate (default 10000; 5000 with -genlock-low or -60hz)\n");
   printf("  -fps <n>           fps asked of Sunshine (default: the core's frame rate; 30 = half)\n");
   printf("  -pads <1-4>        pads to emulate on the PC (default 1)\n");
   printf("  -noaudio           no audio\n");
@@ -256,7 +256,7 @@ int mg_stream_session(PSERVER_DATA server, options *o, int app_id, char *msg, si
   bool half = o->fps > 0 && o->fps <= full / 2 + 1;
   sc.fps = half ? full / 2 : full;
   sc.clientRefreshRateX100 = half ? ci.refresh_x100 / 2 : ci.refresh_x100;
-  sc.bitrate = o->bitrate ? o->bitrate : 10000;
+  sc.bitrate = o->bitrate ? o->bitrate : mg_auto_bitrate(o->genlock, o->gl_lag, o->guard);
   sc.packetSize = o->packet_size;
   sc.streamingRemotely = o->remote;
   sc.audioConfiguration = AUDIO_CONFIGURATION_STEREO;

@@ -444,7 +444,8 @@ static void item_label(const item *it, char *label, size_t ln, char *value, size
   case IT_BITRATE:
     snprintf(label, ln, "Bitrate");
     if (opt->bitrate) snprintf(value, vn, "< %d kbps >", opt->bitrate);
-    else snprintf(value, vn, "< auto >");
+    else snprintf(value, vn, "< auto (%d kbps) >",
+                  mg_auto_bitrate(sync_mode != SYNC_60HZ, sync_mode == SYNC_GENLOCK, sync_mode == SYNC_60HZ));
     break;
   case IT_AUDIO: snprintf(label, ln, "Audio"); snprintf(value, vn, "< %s >", opt->audio ? "on" : "off"); break;
   case IT_QUITAFTER: snprintf(label, ln, "Close the app on exit"); snprintf(value, vn, "< %s >", opt->quit_after ? "yes" : "no"); break;

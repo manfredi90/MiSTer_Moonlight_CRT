@@ -31,6 +31,13 @@ typedef struct {
   const char *core_rbf;
 } options;
 
+/* The bitrate when none is set (auto): 10 Mbps with the genlock's reserve (it absorbs the large
+ * pictures' decoding), 5 Mbps with the genlock low latency and with 60 Hz (each picture must
+ * decode within a frame), 10 Mbps without sync (the stock core) */
+static inline int mg_auto_bitrate(bool genlock, bool gl_lag, bool guard) {
+  return (genlock && !gl_lag) || (!genlock && guard) ? 5000 : 10000;
+}
+
 /* A streaming session with the core already attached. Returns 0 if the stream
  * started (and then ended), -1 if it did not start; 'msg' receives the reason. */
 int mg_stream_session(PSERVER_DATA server, options *o, int app_id, char *msg, size_t msglen);

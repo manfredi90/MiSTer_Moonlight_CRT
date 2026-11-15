@@ -50,7 +50,8 @@ ARM, which only keeps up at low bitrates.
 
 ## Settings
 
-In the menu: bitrate (auto = 10 Mbps, up to 10 Mbps), audio, closing the app on exit, sync, the
+In the menu: bitrate (up to 10 Mbps; auto = 10 Mbps with *genlock*, 5 Mbps with *genlock low latency*
+and *60 Hz*), audio, closing the app on exit, sync, the
 PC's resolution. The choices are kept in `MiSTer_moonlight/menu.cfg`, with the list of PCs. The
 stream is always 640x480 at 60 pictures a second (what the core shows 1:1); on the command line
 `-width`, `-height` and `-fps` remain for tests.
