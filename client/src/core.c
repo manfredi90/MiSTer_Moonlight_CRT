@@ -433,6 +433,9 @@ static void pace_wait(uint64_t *held_us, bool *forced) {
 #define G_POLL_US     400
 #define G_XH          1200        /* il genlock: i ritardi delle ultime 1200 immagini (20 s) */
 #define G_FE          1800        /* il genlock: la frequenza del PC sulle ultime 1800 immagini (30 s) */
+#define G_LQ          32          /* la latenza: le code delle immagini scritte / emesse */
+#define G_LX          3600        /* ... x sulle ultime 3600 immagini (60 s) */
+#define G_LL          31          /* ... L: la mediana delle ultime 31 prese */
 #define G_FE_MIN_S    10.0        /* ... usata da 10 s di misura (prima, la stima d'avvio di 4 s) */
 #define G_FE_MAX_US   40.0        /* ... buona entro +-40 us a quadro (il PLL arriva a +-32) */
 #define G_FE_MAX_SD_US 1500.0     /* ... e con la fase entro 1,5 ms (scarto quadratico) dalla retta */
@@ -478,6 +481,21 @@ static struct {
   /* immagini scritte in attesa dell'esito: l'istante della scrittura e la presa attesa */
   struct { double wr, ev; bool idr; } pend[4];
   unsigned npend;
+  /* LA LATENZA VERA, immagine per immagine (dai contatori del core, parole 23, 85, 31 e le prese):
+   * le immagini scritte (v: l'arrivo nominale dal timestamp RTP) aspettano di essere emesse dal
+   * decodificatore, quelle emesse di essere prese o scartate, in ordine. x = pronta - v (decodifica
+   * più rete), L = presa - v (la latenza dall'arrivo nominale allo schermo) */
+  double lq_w[G_LQ], lq_e[G_LQ];   /* scritte: v; emesse: v */
+  unsigned lq_wh, lq_wn, lq_eh, lq_en;
+  uint32_t lq_oe, lq_pk, lq_sk;
+  bool lq_have;
+  unsigned lq_wmin, lq_wmin_n;     /* la coda delle scritte, il minimo su 120 quadri */
+  double lx[G_LX]; unsigned lx_i, lx_n;      /* x */
+  double ll[G_LL]; unsigned ll_i, ll_n;      /* L */
+  double lx50, lx999, lL;          /* le statistiche (ogni mezzo secondo) */
+  bool lstat, lag_ctl;
+  double lag_Lt;
+  unsigned lq_resync;
   /* contatori per -stats */
   unsigned held, misses, switches, hits;
   double held_us_sum;
@@ -512,6 +530,8 @@ static struct {
   unsigned fe_rejected;
   unsigned r_n;
 } g = { .mx = PTHREAD_MUTEX_INITIALIZER };
+static void lat_written(double v);
+static void lat_track(const struct h264ring_status *st, double s);
 
 static double g_wrap(double x, double P) {
   x = fmod(x, P);
@@ -611,6 +631,7 @@ static void *guard_thread(void *arg) {
           }
           g.npend = j;
         }
+        lat_track(&st, s);
         g.pick = pick;
         g.starve = starve;
         g.have_snap = true;
@@ -714,6 +735,9 @@ static void guard_start(void) {
   g.mode = 0;
   g.good_run = 0;
   g.npend = 0;
+  g.lq_wh = g.lq_wn = g.lq_eh = g.lq_en = 0; g.lq_have = false; g.lq_wmin = 99; g.lq_wmin_n = 0;
+  g.lx_i = g.lx_n = g.ll_i = g.ll_n = 0; g.lstat = false; g.lq_resync = 0; g.lx50 = g.lx999 = g.lL = 0;
+  g.lag_ctl = false; g.lag_Lt = 0;
   g.held = g.misses = g.switches = g.hits = 0;
   g.held_us_sum = 0;
   g.gl_state = genlock_req ? 1 : 0;
@@ -749,6 +773,76 @@ static void guard_start(void) {
   g.th_ok = pthread_create(&g.th, NULL, guard_thread, NULL) == 0;
 }
 
+static int dcmp(const void *a, const void *b) {
+  double x = *(const double *)a, y = *(const double *)b;
+  return x < y ? -1 : x > y;
+}
+
+/* (sotto g.mx) un'immagine scritta: v = l'arrivo nominale (0 se non noto) */
+static void lat_written(double v) {
+  if (g.lq_wn == G_LQ) { g.lq_wh = (g.lq_wh + 1) % G_LQ; g.lq_wn--; }
+  g.lq_w[(g.lq_wh + g.lq_wn++) % G_LQ] = v;
+}
+
+/* (sotto g.mx, filo della griglia) uno stato del core letto all'inizio del quadro s */
+static void lat_track(const struct h264ring_status *st, double s) {
+  uint32_t oe = (uint32_t)(st->w[23] >> 32);
+  uint32_t pk = (uint32_t)H264RING_ST(st, DISP_PICK), sk = (uint32_t)H264RING_ST(st, DISP_SKIP);
+  if (!g.lq_have) { g.lq_have = true; g.lq_oe = oe; g.lq_pk = pk; g.lq_sk = sk; return; }
+  uint32_t de = oe - g.lq_oe, dp = pk - g.lq_pk, ds = sk - g.lq_sk;
+  g.lq_oe = oe; g.lq_pk = pk; g.lq_sk = sk;
+  if (de > 8 || dp > 8 || ds > 8) {          /* fuori sincronia (non dovrebbe): da capo */
+    g.lq_wn = g.lq_en = 0; g.lq_resync++;
+    return;
+  }
+  /* l'istante dell'ultima emissione: tm_emit (27 MHz) rispetto a tm_now (27 MHz >> 10) */
+  int64_t dt = (int64_t)(int32_t)((uint32_t)(st->w[85] >> 32) - (uint32_t)((st->w[31] >> 42) << 10));
+  double t_emit = s + dt / 27.0;
+  for (uint32_t j = 0; j < de; j++) {
+    if (!g.lq_wn) break;                     /* scritta prima che si cominciasse a contare */
+    double v = g.lq_w[g.lq_wh];
+    g.lq_wh = (g.lq_wh + 1) % G_LQ; g.lq_wn--;
+    if (g.lq_en == G_LQ) { g.lq_eh = (g.lq_eh + 1) % G_LQ; g.lq_en--; }
+    g.lq_e[(g.lq_eh + g.lq_en++) % G_LQ] = v;
+    if (de == 1 && v > 0) {                  /* l'istante è di questa sola */
+      g.lx[g.lx_i] = t_emit - v;
+      g.lx_i = (g.lx_i + 1) % G_LX;
+      if (g.lx_n < G_LX) g.lx_n++;
+    }
+  }
+  for (uint32_t j = 0; j < ds && g.lq_en; j++) { g.lq_eh = (g.lq_eh + 1) % G_LQ; g.lq_en--; }
+  double ev = s - g.Pm + g.eoff;             /* la presa appena passata */
+  for (uint32_t j = 0; j < dp && g.lq_en; j++) {
+    double v = g.lq_e[g.lq_eh];
+    g.lq_eh = (g.lq_eh + 1) % G_LQ; g.lq_en--;
+    if (v > 0) {
+      g.ll[g.ll_i] = ev - v;
+      g.ll_i = (g.ll_i + 1) % G_LL;
+      if (g.ll_n < G_LL) g.ll_n++;
+    }
+  }
+  /* un'immagine scritta e mai emessa (un errore del decodificatore) sposterebbe tutte le coppie di
+   * una: se in 2 s la coda delle scritte non torna mai vuota, la più vecchia si toglie */
+  if (g.lq_wn < g.lq_wmin) g.lq_wmin = g.lq_wn;
+  if (++g.lq_wmin_n >= 120) {
+    if (g.lq_wmin >= 1 && g.lq_wn) { g.lq_wh = (g.lq_wh + 1) % G_LQ; g.lq_wn--; g.lq_resync++; }
+    g.lq_wmin = 99; g.lq_wmin_n = 0;
+  }
+  /* le statistiche, ogni 30 quadri */
+  if (g.lq_wmin_n % 30 == 0 && g.lx_n >= 600 && g.ll_n == G_LL) {
+    static double tmp[G_LX];
+    memcpy(tmp, g.lx, g.lx_n * sizeof(double));
+    qsort(tmp, g.lx_n, sizeof(double), dcmp);
+    g.lx50 = tmp[g.lx_n / 2];
+    g.lx999 = tmp[(unsigned)(g.lx_n * 0.999)];
+    double tl[G_LL];
+    memcpy(tl, g.ll, sizeof(tl));
+    qsort(tl, G_LL, sizeof(double), dcmp);
+    g.lL = tl[G_LL / 2];
+    g.lstat = g.lL > 0 && g.lL < 100000;
+  }
+}
+
 static void guard_stop(void) {
   if (!g.th_ok)
     return;
@@ -756,6 +850,9 @@ static void guard_stop(void) {
   pthread_join(g.th, NULL);
   g.th_ok = false;
   tr_end();
+  if (g.gl_state == 2 && g.lstat)
+    printf("[genlock] a fine stream: latenza %.1f ms dall'arrivo allo schermo (pronta dopo l'arrivo: mediana %.1f, 99,9%% %.1f ms)%s\n",
+           g.lL / 1000, g.lx50 / 1000, g.lx999 / 1000, g.lag_ctl ? ", genlock +1" : "");
   if (g.gl_state == 2)
     printf("[genlock] a fine stream: frequenza del PC %s %+.2f us a quadro (%.4f Hz), fase a %.2f ms dalla retta%s\n",
            g.fe_valid ? "misurata" : "stimata", g.fe_valid ? g.fe_F : g.gl_integ, 1e6 / (16666.667 + (g.fe_valid ? g.fe_F : g.gl_integ)),
@@ -779,6 +876,7 @@ static void guard_wait(bool idr, uint64_t *held_us, PDECODE_UNIT du) {
   double w = (double)now_us();
   pthread_mutex_lock(&g.mx);
   if (g.samples < 90) {
+    lat_written(0);
     pthread_mutex_unlock(&g.mx);
     return;
   }
@@ -965,6 +1063,25 @@ static void guard_wait(bool idr, uint64_t *held_us, PDECODE_UNIT du) {
     if (tg < 300) tg += P;
     tg = g_wrap(tg, P);
     double e = g_wrap(phv - tg + P / 2, P) - P / 2;
+    /* GENLOCK +1: l'obiettivo è la latenza vera L (presa - arrivo nominale, misurata immagine per
+     * immagine), non la fase: con la riserva il core tiene un'immagine in più dopo la raffica d'avvio
+     * o un'immagine in ritardo, e la fase da sola restava un quadro sopra (36 ms sulla traccia del
+     * 15/11). L'obiettivo: la decodifica tipica (mediana, rete compresa) più un quadro e 1 ms: la
+     * riserva per le immagini tipiche, ogni immagine ha fino a un quadro in più del solito (la più
+     * lenta, 99,9 %, sulle tracce resta 8-10 ms sotto; il 99,9 % non entra nell'obiettivo: per un
+     * minuto conta ancora la raffica d'avvio, 50-60 ms). Sulle tracce del 15/11: 29,9 ms a 10000
+     * kbps, 26,2 a 5000. Un
+     * errore è L - obiettivo, non avvolto: un quadro di troppo si toglie scorrendo la fase (il core un
+     * po' più veloce per qualche secondo), senza scartare immagini */
+    if (g.gl_lag_st == 2 && g.lstat) {
+      double Lt = g.lx50 + P + 1000;
+      if (!g.lag_ctl)
+        printf("[genlock] +1: latenza %.1f ms, obiettivo %.1f ms (pronta dopo l'arrivo: mediana %.1f, 99,9%% %.1f ms)\n",
+               g.lL / 1000, Lt / 1000, g.lx50 / 1000, g.lx999 / 1000);
+      g.lag_ctl = true;
+      g.lag_Lt = Lt;
+      e = Lt - g.lL;
+    }
     double pc = e / 150.0;
     /* la frequenza: la misura continua appena c'è (e l'integrale non si muove più con l'errore) */
     if (g.fe_valid) {
@@ -1102,6 +1219,7 @@ static void guard_wait(bool idr, uint64_t *held_us, PDECODE_UNIT du) {
               rtp, du->fullLength, idr, have_v ? phv : -1.0, tr_e, tr_tg, tr_q, tr_D, tr_trim, tr_lk,
               (unsigned long long)*held_us, v_abs);
   pthread_mutex_lock(&g.mx);
+  lat_written(have_v ? v_abs : 0);
   if (g.npend == 4) {
     memmove(&g.pend[0], &g.pend[1], 3 * sizeof(g.pend[0]));
     g.npend = 3;
