@@ -432,6 +432,8 @@ static void pace_wait(uint64_t *held_us, bool *forced) {
  * mezzo quadro nessun taglio aiuta e resta spenta. */
 #define G_POLL_US     400
 #define G_XH          1200        /* il genlock: i ritardi delle ultime 1200 immagini (20 s) */
+#define G_FE          1800        /* il genlock: la frequenza del PC sulle ultime 1800 immagini (30 s) */
+#define G_FE_MIN_S    10.0        /* ... usata da 10 s di misura (prima, la stima d'avvio di 4 s) */
 /* La trattenuta delle immagini in anticipo è spenta: due versioni (fino a dopo / fino a prima della
  * presa precedente) hanno peggiorato le cose sul MiSTer (tracce del 14/11), e il modello dei tempi
  * del core che le giustificava non regge con la seconda traccia. Resta il codice, spento. */
@@ -499,6 +501,12 @@ static struct {
   unsigned xh_i, xh_n, xh_cnt, gl_good;
   double fll_start, fll_t0, fll_prev, fll_phu, fll_sx, fll_sy, fll_sxx, fll_sxy;
   unsigned fll_n;
+  /* la frequenza del PC misurata di continuo (sostituisce l'integrale): la pendenza di
+   * Y = fase del timestamp RTP (srotolata) + la fase tolta dal trim applicato al core */
+  double fe_x[G_FE], fe_y[G_FE];
+  unsigned fe_i, fe_n, fe_cnt;
+  bool fe_have, fe_valid;
+  double fe_prev, fe_phu, fe_C, fe_ta, fe_w, fe_t0, fe_F, fe_sd;
   unsigned r_n;
 } g = { .mx = PTHREAD_MUTEX_INITIALIZER };
 
@@ -707,6 +715,7 @@ static void guard_start(void) {
   g.gl_pll_fail = false;
   g.fll_done = false;
   g.fll_start = g.fll_t0 = g.fll_prev = g.fll_phu = g.fll_sx = g.fll_sy = g.fll_sxx = g.fll_sxy = 0;
+  g.fe_have = g.fe_valid = false; g.fe_n = g.fe_i = g.fe_cnt = 0; g.fe_F = g.fe_sd = 0; g.fe_ta = 0;
   g.fll_n = 0;
   g.rtp_have = g.q_init = g.gl_locked = g.d_have = g.gl_relock = false;
   g.p240 = ci.p240;
@@ -809,6 +818,7 @@ static void guard_wait(bool idr, uint64_t *held_us, PDECODE_UNIT du) {
       if (g.d_have) printf("[genlock] salto di %.0f ms tra timestamp e arrivi: si ricomincia la misura\n",
                            (d - (g.d_ref + g.dmin)) / 1000);
       g.d_have = true; g.d_ref = d; g.dmin = 0; g.xh_i = g.xh_n = g.xh_cnt = 0; g.q_init = false;
+      g.fe_have = false; g.fe_n = g.fe_i = g.fe_cnt = 0;
     }
     g.xh[g.xh_i] = (float)(d - g.d_ref);
     g.xh_i = (g.xh_i + 1) % G_XH;
@@ -836,6 +846,58 @@ static void guard_wait(bool idr, uint64_t *held_us, PDECODE_UNIT du) {
     v_abs = rtp_us + g.d_ref + g.dmin;
     phv = g_wrap(v_abs - e0, P);
     have_v = g.q_init;
+    /* LA FREQUENZA DEL PC, MISURATA DI CONTINUO. La fase del timestamp RTP rispetto alle prese
+     * (senza la base dmin, che salta a ogni aggiornamento) cambia di (periodo del PC - periodo del
+     * core) a quadro; il periodo del core è quello nominale più il trim applicato (che il core
+     * raggiunge scivolando, 25 unità al secondo: lo si simula). Y = la fase srotolata + l'integrale
+     * del trim applicato ha quindi pendenza (periodo del PC - nominale), qualunque cosa faccia
+     * l'anello: è la parte di frequenza del genlock, misurata invece che integrata dall'errore di
+     * fase. L'integrale di prima, a ogni giro di fase (sulla traccia del 15/11 a 5000 kbps: la fase
+     * scivolava di un quadro ogni 25-30 s, raffiche di 40-80 ripetute), cambiava segno e si caricava
+     * nel verso sbagliato: stimava il PC 29,7 us a quadro più lento, era 15,8. Sulle tracce del 15/11
+     * la pendenza su 30 s dà 15,8-16,1 us a quadro +-0,2 (su 10 s +-1, su 4 s +-3,5). */
+    if (g.fll_done) {
+      double ph = g_wrap(rtp_us + g.d_ref - e0, P);
+      if (!g.fe_have) {
+        g.fe_have = true; g.fe_phu = 0; g.fe_C = 0; g.fe_t0 = w; g.fe_ta = g.gl_trim_sent;
+        g.fe_n = g.fe_i = g.fe_cnt = 0;
+      } else {
+        g.fe_phu += g_wrap(ph - g.fe_prev + P / 2, P) - P / 2;
+        double dts = (w - g.fe_w) / 1e6;
+        g.fe_C += g.fe_ta * P / 65536.0 * (w - g.fe_w) / P;
+        double st = 25.0 * dts, tt = g.gl_trim_sent;
+        g.fe_ta = g.fe_ta < tt ? fmin(tt, g.fe_ta + st) : fmax(tt, g.fe_ta - st);
+      }
+      g.fe_prev = ph;
+      g.fe_w = w;
+      g.fe_x[g.fe_i] = (w - g.fe_t0) / 1e6;
+      g.fe_y[g.fe_i] = g.fe_phu + g.fe_C;
+      g.fe_i = (g.fe_i + 1) % G_FE;
+      if (g.fe_n < G_FE) g.fe_n++;
+      if (++g.fe_cnt >= 30 && g.fe_n > 300) {
+        g.fe_cnt = 0;
+        double sx = 0, sy = 0, sxx = 0, sxy = 0, n = g.fe_n, xmin = 1e30, xmax = -1e30;
+        for (unsigned i = 0; i < g.fe_n; i++) {
+          double x = g.fe_x[i], y = g.fe_y[i];
+          sx += x; sy += y; sxx += x * x; sxy += x * y;
+          if (x < xmin) xmin = x;
+          if (x > xmax) xmax = x;
+        }
+        double den = n * sxx - sx * sx;
+        if (den > 0 && xmax - xmin >= G_FE_MIN_S) {
+          double slope = (n * sxy - sx * sy) / den;            /* us di fase al secondo */
+          double F = slope * P / 1e6;                          /* us a quadro */
+          double resid = 0, b = (sy - slope * sx) / n;
+          for (unsigned i = 0; i < g.fe_n; i++) { double r = g.fe_y[i] - (b + slope * g.fe_x[i]); resid += r * r; }
+          g.fe_sd = sqrt(resid / n);
+          if (!g.fe_valid)
+            printf("[genlock] frequenza del PC misurata su %.0f s: %+.2f us a quadro (%.4f Hz; la stima d'avvio era %+.1f)\n",
+                   xmax - xmin, F, 1e6 / (P + F), g.gl_integ);
+          g.fe_F = F;
+          g.fe_valid = true;
+        }
+      }
+    }
   }
   /* prima la frequenza (FLL): con il core al nominale, la pendenza della fase di v dice di quanto il
    * PC è più lento o più veloce (us a quadro); 4 s, dopo la raffica d'avvio di Sunshine (arrivi sparsi
@@ -880,12 +942,20 @@ static void guard_wait(bool idr, uint64_t *held_us, PDECODE_UNIT du) {
     tg = g_wrap(tg, P);
     double e = g_wrap(phv - tg + P / 2, P) - P / 2;
     double pc = e / 150.0;
+    /* la frequenza: la misura continua appena c'è (e l'integrale non si muove più con l'errore) */
+    if (g.fe_valid) {
+      double dF = g.fe_F - g.gl_integ;
+      if (dF > 0.5) dF = 0.5;                 /* al più 0,5 us a quadro ogni immagine (all'avvio) */
+      if (dF < -0.5) dF = -0.5;
+      g.gl_integ += dF;
+    }
     if (g.gl_relock) {
       g.gl_relock = false;
+      g.fe_have = false;                      /* la fase delle prese salta (raster cambiato): si rimisura */
       if (g.gl_locked) { g.gl_locked = false; g.gl_good = 0; g.gl_bad_t0 = 0; g.gl_eema = 5000; }
     }
     if (g.gl_locked) {
-      g.gl_integ += e * 1e-6;
+      if (!g.fe_valid) g.gl_integ += e * 1e-6;
       if (pc > 3) pc = 3;
       if (pc < -3) pc = -3;
       if (fabs(e) > 5000) {
@@ -898,7 +968,7 @@ static void guard_wait(bool idr, uint64_t *held_us, PDECODE_UNIT du) {
         g.gl_bad_t0 = 0;
       }
     } else {
-      g.gl_integ += e * 8e-6;
+      if (!g.fe_valid) g.gl_integ += e * 8e-6;
       /* agganciato quando l'errore MEDIO degli ultimi ~2 s è sotto 1 ms (non ogni campione sotto 0,8:
        * col Wi-Fi a volte non succedeva mai, e l'aggancio, che muove la frequenza quanto serve,
        * restava per tutta la sessione) */
@@ -1032,6 +1102,10 @@ static void guard_report(void) {
            g.gl_locked ? "agganciato" : "aggancio", g.gl_phv / 1000, g.gl_target / 1000, g.gl_n ? g.gl_err_abs / g.gl_n / 1000 : 0.0,
            g.q / 1000, g.mad / 1000, g.D / 1000, (g.D + g.q + 500) / 1000,
            g.gl_trim, g.gl_integ, g.Pm > 0 ? 1e6 / g.Pm : 0.0, g.misses);
+  if (g.gl_state == 2)
+    printf("[genlock] frequenza del PC: %s %+.2f us a quadro (%.4f Hz), scarto della fase sulla retta %.2f ms\n",
+           g.fe_valid ? "misurata" : "stima d'avvio (misura non ancora pronta)", g.fe_valid ? g.fe_F : g.gl_integ,
+           1e6 / (P + (g.fe_valid ? g.fe_F : g.gl_integ)), g.fe_sd / 1000);
   if (g.gl_lag_st)
     printf("[genlock] riserva (genlock +1): %s\n", g.gl_lag_st == 2 ? "applicata" : g.gl_lag_st == 3 ? "rifiutata dal core" : "chiesta, mai applicata");
   if (g.gl_state == 2 || g.gl_pll_fail)
