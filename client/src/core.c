@@ -494,6 +494,8 @@ static struct {
   double lx[G_LX]; unsigned lx_i, lx_n;      /* x */
   double ll[G_LL]; unsigned ll_i, ll_n;      /* L */
   double lx50, lx999, lL;          /* le statistiche (ogni mezzo secondo) */
+  double lsum, lr[4];
+  unsigned lcnt, lr_i, lr_n;
   bool lstat, lag_ctl;
   double lag_Lt;
   unsigned lq_resync;
@@ -739,7 +741,7 @@ static void guard_start(void) {
   g.npend = 0;
   g.lq_wh = g.lq_wn = g.lq_eh = g.lq_en = 0; g.lq_have = false; g.lq_wmin = 99; g.lq_wmin_n = 0;
   g.lx_i = g.lx_n = g.ll_i = g.ll_n = 0; g.lstat = false; g.lq_resync = 0; g.lx50 = g.lx999 = g.lL = 0;
-  g.lag_ctl = false; g.lag_Lt = 0;
+  g.lag_ctl = false; g.lag_Lt = 0; g.lsum = 0; g.lcnt = g.lr_i = g.lr_n = 0;
   g.held = g.misses = g.switches = g.hits = 0;
   g.held_us_sum = 0;
   g.gl_state = genlock_req ? 1 : 0;
@@ -842,6 +844,13 @@ static void lat_track(const struct h264ring_status *st, double s) {
     qsort(tl, G_LL, sizeof(double), dcmp);
     g.lL = tl[G_LL / 2];
     g.lstat = g.lL > 0 && g.lL < 100000;
+    /* la latenza media da agganciato, senza gli ultimi 2 s (alla chiusura dello stream le ultime
+     * immagini escono tardi: a fine stream la mediana dava 54-56 ms invece di 20) */
+    if (g.lstat && g.gl_locked) {
+      if (g.lr_n == 4) { g.lsum += g.lr[g.lr_i]; g.lcnt++; } else g.lr_n++;
+      g.lr[g.lr_i] = g.lL;
+      g.lr_i = (g.lr_i + 1) % 4;
+    }
   }
 }
 
@@ -852,9 +861,9 @@ static void guard_stop(void) {
   pthread_join(g.th, NULL);
   g.th_ok = false;
   tr_end();
-  if (g.gl_state == 2 && g.lstat)
-    printf("[genlock] a fine stream: latenza %.1f ms dall'arrivo allo schermo (pronta dopo l'arrivo: mediana %.1f, 99,9%% %.1f ms)%s\n",
-           g.lL / 1000, g.lx50 / 1000, g.lx999 / 1000, g.lag_ctl ? ", genlock +1" : "");
+  if (g.gl_state == 2 && g.lcnt)
+    printf("[genlock] a fine stream: latenza media %.1f ms dall'arrivo allo schermo, da agganciato (%.0f s; pronta dopo l'arrivo: mediana %.1f ms)%s\n",
+           g.lsum / g.lcnt / 1000, g.lcnt * 0.5, g.lx50 / 1000, g.lag_ctl ? ", genlock +1" : "");
   if (g.gl_state == 2)
     printf("[genlock] a fine stream: frequenza del PC %s %+.2f us a quadro (%.4f Hz), fase a %.2f ms dalla retta%s\n",
            g.fe_valid ? "misurata" : "stimata", g.fe_valid ? g.fe_F : g.gl_integ, 1e6 / (16666.667 + (g.fe_valid ? g.fe_F : g.gl_integ)),
