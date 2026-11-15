@@ -432,6 +432,7 @@ static void pace_wait(uint64_t *held_us, bool *forced) {
  * mezzo quadro nessun taglio aiuta e resta spenta. */
 #define G_POLL_US     400
 #define G_XH          1200        /* il genlock: i ritardi delle ultime 1200 immagini (20 s) */
+#define G_Q_MAX_US    8000.0      /* ... e il margine al più mezzo quadro */
 #define G_FE          1800        /* il genlock: la frequenza del PC sulle ultime 1800 immagini (30 s) */
 #define G_LQ          32          /* la latenza: le code delle immagini scritte / emesse */
 #define G_LX          3600        /* ... x sulle ultime 3600 immagini (60 s) */
@@ -942,8 +943,21 @@ static void guard_wait(bool idr, uint64_t *held_us, PDECODE_UNIT du) {
       qsort(tmp, g.xh_n, sizeof(float), g_fcmp);
       g.dmin = tmp[(unsigned)(g.xh_n * 0.03)];
       g.q_tgt = tmp[(unsigned)(g.xh_n * 0.97)] - g.dmin;
+      /* al più mezzo quadro: arrivi sparsi su più di tanto non li sistema nessuna fase, e un margine
+       * più grande di un quadro fa solo girare l'obiettivo (che è modulo un quadro) */
+      if (g.q_tgt > G_Q_MAX_US) g.q_tgt = G_Q_MAX_US;
       g.xh_cnt = 0;
       if (!g.q_init) { g.q = g.q_tgt; g.q_init = true; }
+      /* agganciato, il margine scende di 0,15 ms al secondo; se l'obiettivo è molto più basso (i
+       * ritardi irregolari dell'avvio usciti dalla finestra di 20 s) si salta lì e si riaggancia: la
+       * prima sessione dopo l'avvio di Sunshine del 15/11 (il PC a 36-57 fps per 30 s) aveva un margine
+       * di 48 ms sceso in minuti, e l'obiettivo, girando, passava per la presa: 75-86 immagini
+       * scartate ogni 10 s col PC già regolare */
+      if (g.gl_locked && g.q - g.q_tgt > 2000) {
+        printf("[genlock] margine sceso da %.1f a %.1f ms: si riaggancia\n", g.q / 1000, g.q_tgt / 1000);
+        g.q = g.q_tgt;
+        g.gl_locked = false; g.gl_good = 0; g.gl_bad_t0 = 0; g.gl_eema = 5000;
+      }
     }
     if (!g.gl_locked) {
       double qs = 1000.0 * dt_q;           /* in aggancio il margine segue svelto, 1 ms al secondo */
@@ -1052,6 +1066,8 @@ static void guard_wait(bool idr, uint64_t *held_us, PDECODE_UNIT du) {
     if (!g.fll_done && w - g.fll_start > 15e6) {
       g.fll_done = true;
       printf("[genlock] frequenza del PC non misurata (arrivi irregolari per 15 s): si parte da 0\n");
+      g.xh_i = g.xh_n = g.xh_cnt = 0;          /* anche qui i ritardi dell'avvio non contano */
+      g.q_init = false;
     }
   } else if (g.gl_state == 2 && have_v) {
     /* poi la fase: obiettivo P - D - margine - 0,5 ms (un quadro dopo se non ci sta). AGGANCIO: la
