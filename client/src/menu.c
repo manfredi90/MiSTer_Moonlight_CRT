@@ -158,7 +158,9 @@ static double status_until;
 static char last_app[64];
 static char cfg_path[PATH_MAX];
 
-static const int bitrates[] = { 0, 3000, 5000, 8000, 10000, 12000, 15000, 20000 };
+/* fino a 10000: oltre, le immagini grandi superano il quadro di decodifica del core (circa 2,7 ms
+ * + 0,57 us per byte, tracce del 15/11) e la qualità a 640x480 non migliora */
+static const int bitrates[] = { 0, 3000, 5000, 8000, 10000 };
 #define N_BITRATES (int)(sizeof(bitrates) / sizeof(bitrates[0]))
 
 static double now_s(void) {
@@ -194,7 +196,7 @@ static void cfg_load(void) {
     char *v = eq + 1;
     v[strcspn(v, "\r\n")] = 0;
     /* res= e fps= (versioni fino alla 0.1.5) si ignorano: dal menu sempre 640x480 a 60 */
-    if (!strcmp(line, "bitrate")) opt->bitrate = atoi(v);
+    if (!strcmp(line, "bitrate")) { opt->bitrate = atoi(v); if (opt->bitrate > 10000) opt->bitrate = 10000; }
     else if (!strcmp(line, "audio")) opt->audio = atoi(v) != 0;
     else if (!strcmp(line, "quitafter")) opt->quit_after = atoi(v) != 0;
     else if (!strcmp(line, "lastapp")) snprintf(last_app, sizeof(last_app), "%s", v);
