@@ -313,6 +313,7 @@ module ring_rd_tb;
         .f_rum_p4(rumble[79:64]), .f_rum_p5(rumble[95:80]), .f_rum_changes(rum_changes),
         .f_pic_held(pic_held_s), .f_pic_mode(pic_mode), .f_pic_emitted(pic_emitted_s),     // 0.15: word 84
         .f_disp_fhold(32'd0),                                                            // 0.15: word 85 (no display here)
+        .f_tm_emit(32'd0), .f_tm_start(32'd0), .f_tm_now(22'd0), .f_gl_lag(1'b0),           // mm 1.5: no display here
         // 0.16: word 86, distinct constants but the stream's own (ring_rd's override and mismatch count)
         .f_vui_matrix(8'hD1), .f_vui_primaries(8'hD2), .f_vui_transfer(8'hD3), .f_vui_full_range(1'b1),
         .f_vui_colour_present(1'b0), .f_colour_override(colour_mode != 3'd0), .f_colour_unsup(16'hD004),
@@ -594,6 +595,7 @@ module ring_rd_tb;
             if (final_q[i][23:0] === 24'h040808) exp_err = final_q[i + 1][7:0];     // the "err" field (word 4 [8 +: 8])
         repeat (5) @(posedge clk);
         step_i = 0;
+        begin : steps_loop                    // (named: iverilog 12 has no `break`)
         forever begin
             op = steps[step_i]; step_i++;
             code = op[63:56]; n = op[55:32];
@@ -632,7 +634,7 @@ module ring_rd_tb;
                             if (spins > 400000) begin fail("hang", $sformatf("state %0d never became %0d (err %0d)", (cw_lo(4) & 32'hFF), op[7:0], ((cw_lo(4) >> 8) & 32'hFF))); $fatal(1); end
                         end
                       end
-                8'd9: break;
+                8'd9: disable steps_loop;
                 8'd10: begin repeat (3) @(posedge clk); lock_n = 1'b1; core_n = 1'b1; end
                 8'd11: begin                          // 0.5: STILL -- nothing delivered, the index unmoved
                         int items0;  logic [31:0] r0;
@@ -656,16 +658,17 @@ module ring_rd_tb;
                 default: begin $display("FAIL [harness] step %0d op %h", step_i - 1, op); $fatal(1); end
             endcase
         end
+        end
         // everything expected delivered (0.15: and every picture presented)
         spins = 0;
-        while (pics_q[pq][63:56] != 8'hFF) begin
+        while (pics_q[pq][63:56] != 8'hFF && spins <= 400000) begin
             @(posedge clk); spins++;
-            if (spins > 400000) begin fail("pics", $sformatf("stopped at picture item %0d (%h) after %0d pictures", pq, pics_q[pq], n_pics)); break; end
+            if (spins > 400000) fail("pics", $sformatf("stopped at picture item %0d (%h) after %0d pictures", pq, pics_q[pq], n_pics));
         end
         spins = 0;
-        while (expect_q[ep][63:56] != 8'hFF && !(expect_q[ep][63:56] == 8'h05)) begin
+        while (expect_q[ep][63:56] != 8'hFF && !(expect_q[ep][63:56] == 8'h05) && spins <= 400000) begin
             @(posedge clk); spins++;
-            if (spins > 400000) begin fail("missing", $sformatf("stopped at expected item %0d (%h) after %0d items", ep, expect_q[ep], n_items)); break; end
+            if (spins > 400000) fail("missing", $sformatf("stopped at expected item %0d (%h) after %0d items", ep, expect_q[ep], n_items));
         end
         repeat (3 * FRAME_T) @(posedge clk);
         // a consistent copy of the status block (seqlock), and a later one
@@ -713,7 +716,7 @@ module ring_rd_tb;
                 fail("words", $sformatf("words 82-83 (0.13, the rumble) = %h %h with nothing written", img[82], img[83]));
             if (img[84][31:21] !== {8'd20, 3'd0}) fail("words", $sformatf("word 84 (0.15): cap_pic_stores %h", img[84]));
             for (int w = 85; w < 88; w++)
-                if (w != 86 && img[w] !== 64'd0) fail("words", $sformatf("word %0d (0.10, reserved) = %h", w, img[w]));
+                if (w != 86 && w != 87 && img[w] !== 64'd0) fail("words", $sformatf("word %0d (0.10, reserved) = %h", w, img[w]));   // 87: 1.3+ display flags (not driven here)
             // 0.6: the input region -- its own seqlock, its heartbeat, the pads where the layout puts them
             begin
                 logic [63:0] iw [48:71];

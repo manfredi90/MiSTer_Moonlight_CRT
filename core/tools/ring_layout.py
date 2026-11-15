@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """ring_layout.py -- the HPS interface's layout, written down once (docs/architecture.md
-"The HPS interface"). Interface version 1.4 (1.0 FROZEN, roadmap Phase 7; 1.2 adds playback geometry, 1.3 adds display policy status, 1.4 reserves display policy extension bits after restoring 50/60 refresh matching). Nothing published
+"The HPS interface"). Interface version 1.4 (1.0 FROZEN, roadmap Phase 7; 1.2 adds playback geometry, 1.3 adds display policy status, 1.4 reserves display policy extension bits after restoring 50/60 refresh matching; mm 1.5 adds the genlock to word 34 and its status to word 45). Nothing published
 here moves or changes its meaning within 1.x; a minor version only adds (a field in bits
 that read 0, a word that read 0, a record type that was refused), and 0 must keep meaning
 what it meant. Any change here is an interface change -- bump VERSION, update the
@@ -51,7 +51,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 
-VERSION_MAJOR, VERSION_MINOR = 1, 4    # preserve the published 1.4 interface; retired extension bits remain reserved
+VERSION_MAJOR, VERSION_MINOR = 1, 5    # preserve the published 1.4 interface; retired extension bits remain reserved
                                        # 1.2 (2026-10-16, calibrated playback geometry: program word 39 + clip word 88)
                                        # 1.1 (2026-10-10, behaviour only, the layout unchanged): a late
                                        # picture never runs the clock back over queued audio that leads it
@@ -143,7 +143,10 @@ CONSTS = [
     ("W_PAUSE", PROG_WORD + 2, 8, "program (0.5): the pause and attenuation (u32, low half: [0] PAUSE, [15:8] ATTEN, the rest 0)"),
     ("CTL_PAUSE_BIT", 0, 8, "pause word: the PAUSE level"),
     ("CTL_ATTEN_LSB", 8, 8, "pause word: ATTEN [15:8], 0.5 dB steps (0 full volume, 255 mute)"),
-    ("CTL_RESERVED", 0xFFFF00FE, 32, "pause word: the bits that must be 0 (a word with one set is refused whole)"),
+    ("CTL_GL_TRIM_LSB", 16, 8, "(mm 1.5) pause word: GL_TRIM [23:16], signed: the raster's pixel clock slower (+) or faster (-) by GL_TRIM x 2^-16 while GL_EN"),
+    ("CTL_GL_EN_BIT", 24, 8, "(mm 1.5) pause word: GL_EN, the genlock: the raster's frequency follows GL_TRIM, gliding (during a session)"),
+    ("CTL_GL_LAG_BIT", 25, 8, "(mm 1.5) pause word: GL_LAG, one picture of reserve: low latency skips a head only when TWO pictures wait behind it (during a session)"),
+    ("CTL_RESERVED", 0xFC0000FE, 32, "pause word: the bits that must be 0 (a word with one set is refused whole)"),
     ("W_SETTINGS", PROG_WORD + 3, 8, "program (0.4): the settings request (u32, low half: values, mask, seq)"),
     ("REQ_MASK_LSB", 13, 8, "settings request: the mask's first bit (one bit an option, in the mirror's order)"),
     ("REQ_SEQ_LSB", 24, 8, "settings request: the sequence number [31:24] (0 = no request)"),
@@ -353,7 +356,8 @@ WORDS = [
                  ("fit_oh", 48, 13, "... height (frame lines)")]),
     (31, "sys", [("seq_tail", 0, 32, "the status sequence again: read FIRST (equal to seq_head = a consistent copy)"),
                  ("geometry_ack_seq", 32, 8, "(1.2) calibrated picture rectangle request sequence consumed; 0 before a request"),
-                 ("geometry_error", 40, 2, "(1.2) 0 applied, 1 range error, 2 reserved bits set; 3 reserved")]),
+                 ("geometry_error", 40, 2, "(1.2) 0 applied, 1 range error, 2 reserved bits set; 3 reserved"),
+                 ("tm_now", 42, 22, "(mm 1.5) the same clk_sys cycle count >> 10 when this status was written: maps tm_start / tm_emit to the program's clock")]),
     # 0.5: the core's second region, written between words 16-23 and 24-31 (before seq_tail)
     (40, "sys", [("aud_state", 0, 2, "(0.5) audio: 0 idle (nothing queued), 1 armed (queued, waiting to start), 2 playing"),
                  ("aud_ll", 2, 1, "(0.5) audio follows the low-latency rule (the stream's LOW_LATENCY), else paced by the STC"),
@@ -371,7 +375,16 @@ WORDS = [
                  ("aud_hold_bytes", 32, 32, "(0.5) ring bytes the queued audio holds behind the reader")]),
     (45, "sys", [("paused", 0, 1, "(0.5) the pause is applied (word 34's PAUSE, during a session)"),
                  ("ctl_err", 1, 1, "(0.5) the last word 34 read had a reserved bit set: refused, the previous values kept"),
-                 ("atten", 8, 8, "(0.5) the attenuation applied (word 34's ATTEN)")]),
+                 ("atten", 8, 8, "(0.5) the attenuation applied (word 34's ATTEN)"),
+                 ("gl_trim", 16, 8, "(mm 1.5) the genlock trim applied (word 34's GL_TRIM; 0 without GL_EN)"),
+                 ("gl_en", 24, 1, "(mm 1.5) the genlock is applied (word 34's GL_EN, during a session)"),
+                 ("gl_lag", 2, 1, "(mm 1.5) GL_LAG is applied: one picture of reserve"),
+                 ("pll_ok", 25, 1, "(mm 1.5) the video PLL's M and K were read back: the genlock can move it"),
+                 ("pll_moving", 26, 1, "(mm 1.5) the video PLL's K is gliding toward the genlock's target"),
+                 ("pll_state", 27, 4, "(mm 1.5) vid_pll_tune's state (diagnostics: 1 waiting, 2-4 reading M / K, 7 idle, 8-9 writing)"),
+                 ("pll_wait", 31, 1, "(mm 1.5) waitrequest was high at vid_pll_tune's last write (diagnostics)"),
+                 ("pll_fixed", 7, 1, "(mm 1.5) vid_pll_tune uses the M / K the Fitter reported (the read-back gave nothing)"),
+                 ("tm_start", 32, 32, "(mm 1.5) clk_sys (27 MHz) cycle count when the front end began the last picture (fe_pic changed): with tm_emit, the decode time")]),
     # 0.9: the overlay plane's status (docs/architecture.md "The overlay plane")
     (46, "sys", [("ovl_gen", 0, 32, "(0.9) the overlay: the generation of the last consistent descriptor read"),
                  ("ovl_state", 32, 2, "(0.9) 0 off, 1 accepted (shown while a session is open), 2 refused"),
@@ -408,7 +421,8 @@ WORDS = [
                  ("cap_pic_stores", 24, 8, "(0.15) the stores a picture stream may use: DPB_STORES (a 0.14 core reads 0)"),
                  ("pic_emitted", 32, 32, "(0.15) PICTURE records emitted to the display since the PLL lock (wrapping): with pic_held, the store rule")]),
     # 0.15: the display's field alignment (docs/analog.md §5)
-    (85, "sys", [("disp_fhold", 0, 32, "(0.15) 480i / 576i: field pairs held one refresh so that each starts on the raster field of its first field (reset per stream, as disp_late)")]),
+    (85, "sys", [("disp_fhold", 0, 32, "(0.15) 480i / 576i: field pairs held one refresh so that each starts on the raster field of its first field (reset per stream, as disp_late)"),
+                 ("tm_emit", 32, 32, "(mm 1.5) clk_sys (27 MHz) cycle count when the last picture was emitted to the display (out_emit changed): decoded, ready for a pickup")]),
     # 0.16: the colour (docs/architecture.md "The colour (interface 0.16)", docs/colour.md)
     (86, "sys", [("vui_matrix", 0, 8, "(0.16) the shown picture's SPS matrix_coefficients as coded (2 when absent; a program's picture 2)"),
                  ("vui_primaries", 8, 8, "(0.16) ... colour_primaries (2 when absent)"),

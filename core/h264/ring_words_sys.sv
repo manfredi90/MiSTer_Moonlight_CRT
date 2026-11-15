@@ -54,6 +54,7 @@ module ring_words_sys (
     input  wire  [31:0] f_seq_tail,          // w31: the status sequence again: read FIRST (equal to seq_head = a consistent copy)
     input  wire  [7:0] f_geometry_ack_seq,  // w31: (1.2) calibrated picture rectangle request sequence consumed; 0 before a request
     input  wire  [1:0] f_geometry_error,    // w31: (1.2) 0 applied, 1 range error, 2 reserved bits set; 3 reserved
+    input  wire  [21:0] f_tm_now,            // w31: (mm 1.5) the same clk_sys cycle count >> 10 when this status was written: maps tm_start / tm_emit to the program's clock
     input  wire  [1:0] f_aud_state,         // w40: (0.5) audio: 0 idle (nothing queued), 1 armed (queued, waiting to start), 2 playing
     input  wire  [0:0] f_aud_ll,            // w40: (0.5) audio follows the low-latency rule (the stream's LOW_LATENCY), else paced by the STC
     input  wire  [8:0] f_aud_q_rec,         // w40: (0.5) AUDIO records queued, not yet played (at most AUD_MAX_RECORDS)
@@ -71,6 +72,15 @@ module ring_words_sys (
     input  wire  [0:0] f_paused,            // w45: (0.5) the pause is applied (word 34's PAUSE, during a session)
     input  wire  [0:0] f_ctl_err,           // w45: (0.5) the last word 34 read had a reserved bit set: refused, the previous values kept
     input  wire  [7:0] f_atten,             // w45: (0.5) the attenuation applied (word 34's ATTEN)
+    input  wire  [7:0] f_gl_trim,           // w45: (mm 1.5) the genlock trim applied (word 34's GL_TRIM; 0 without GL_EN)
+    input  wire  [0:0] f_gl_en,             // w45: (mm 1.5) the genlock is applied (word 34's GL_EN, during a session)
+    input  wire  [0:0] f_gl_lag,            // w45: (mm 1.5) GL_LAG is applied: one picture of reserve
+    input  wire  [0:0] f_pll_ok,            // w45: (mm 1.5) the video PLL's M and K were read back: the genlock can move it
+    input  wire  [0:0] f_pll_moving,        // w45: (mm 1.5) the video PLL's K is gliding toward the genlock's target
+    input  wire  [3:0] f_pll_state,         // w45: (mm 1.5) vid_pll_tune's state (diagnostics: 1 waiting, 2-4 reading M / K, 7 idle, 8-9 writing)
+    input  wire  [0:0] f_pll_wait,          // w45: (mm 1.5) waitrequest was high at vid_pll_tune's last write (diagnostics)
+    input  wire  [0:0] f_pll_fixed,         // w45: (mm 1.5) vid_pll_tune uses the M / K the Fitter reported (the read-back gave nothing)
+    input  wire  [31:0] f_tm_start,          // w45: (mm 1.5) clk_sys (27 MHz) cycle count when the front end began the last picture (fe_pic changed): with tm_emit, the decode time
     input  wire  [31:0] f_ovl_gen,           // w46: (0.9) the overlay: the generation of the last consistent descriptor read
     input  wire  [1:0] f_ovl_state,         // w46: (0.9) 0 off, 1 accepted (shown while a session is open), 2 refused
     input  wire  [0:0] f_ovl_at,            // w46: (0.9) the overlay is anti-twittered (480i / 576i, Anti-Twitter Auto or On)
@@ -100,6 +110,7 @@ module ring_words_sys (
     input  wire  [0:0] f_pic_mode,          // w84: (0.15) the current stream is a picture stream (its first video record was a PICTURE)
     input  wire  [31:0] f_pic_emitted,       // w84: (0.15) PICTURE records emitted to the display since the PLL lock (wrapping): with pic_held, the store rule
     input  wire  [31:0] f_disp_fhold,        // w85: (0.15) 480i / 576i: field pairs held one refresh so that each starts on the raster field of its first field (reset per stream, as disp_late)
+    input  wire  [31:0] f_tm_emit,           // w85: (mm 1.5) clk_sys (27 MHz) cycle count when the last picture was emitted to the display (out_emit changed): decoded, ready for a pickup
     input  wire  [7:0] f_vui_matrix,        // w86: (0.16) the shown picture's SPS matrix_coefficients as coded (2 when absent; a program's picture 2)
     input  wire  [7:0] f_vui_primaries,     // w86: (0.16) ... colour_primaries (2 when absent)
     input  wire  [7:0] f_vui_transfer,      // w86: (0.16) ... transfer_characteristics (2 when absent)
@@ -125,7 +136,7 @@ module ring_words_sys (
         w = 64'd0;
         case (ix)
             7'd0: begin w[63:0] = 64'h343632485453694D; end
-            7'd1: begin w[15:0] = 16'h104; w[31:16] = 16'h20; w[47:32] = 16'h20; w[63:48] = 16'h28; end
+            7'd1: begin w[15:0] = 16'h105; w[31:16] = 16'h20; w[47:32] = 16'h20; w[63:48] = 16'h28; end
             7'd2: begin w[31:0] = 32'h31800000; w[63:32] = 32'h800000; end
             7'd3: begin w[31:0] = f_seq_head; w[63:32] = 32'h400000; end
             7'd4: begin w[7:0] = f_state; w[15:8] = f_err; w[23:16] = f_live; w[31:24] = f_osd; w[63:32] = f_err_pos; end
@@ -138,13 +149,13 @@ module ring_words_sys (
             7'd26: begin w[31:0] = f_disp_skip; w[47:32] = f_disp_late; w[63:48] = f_disp_starve; end
             7'd27: begin w[15:0] = f_disp_cadence; w[23:16] = f_disp_reanchor; w[26:24] = f_disp_flags; w[30:27] = f_disp_lone; w[33:32] = f_osd_aspect; w[35:34] = f_osd_deint; w[37:36] = f_osd_video_out; w[38:38] = f_osd_hdmi_deint; w[40:39] = f_osd_analog_aspect; w[42:41] = f_osd_refresh; w[44:43] = f_osd_anti_twitter; w[47:45] = f_set_err; w[63:48] = f_gfx_mismatch; end
             7'd30: begin w[15:0] = f_disp_fetch_late; w[16:16] = f_fit_crop_bad; w[17:17] = f_fit_clamp; w[18:18] = f_fit_snap; w[20:19] = f_raster_std; w[21:21] = f_raster_il; w[22:22] = f_raster_auto; w[23:23] = f_anti_twitter; w[31:24] = f_set_seq; w[44:32] = f_fit_ow; w[45:45] = f_fit_valid; w[60:48] = f_fit_oh; end
-            7'd31: begin w[31:0] = f_seq_tail; w[39:32] = f_geometry_ack_seq; w[41:40] = f_geometry_error; end
+            7'd31: begin w[31:0] = f_seq_tail; w[39:32] = f_geometry_ack_seq; w[41:40] = f_geometry_error; w[63:42] = f_tm_now; end
             7'd40: begin w[1:0] = f_aud_state; w[2:2] = f_aud_ll; w[24:16] = f_aud_q_rec; w[63:32] = f_aud_q_samples; end
             7'd41: begin w[31:0] = f_aud_played; w[63:32] = f_aud_records; end
             7'd42: begin w[31:0] = f_aud_gap; w[63:32] = f_aud_late; end
             7'd43: begin w[15:0] = f_aud_underruns; w[31:16] = f_aud_slip_drop; w[47:32] = f_aud_slip_rep; w[63:48] = f_aud_anchor; end
             7'd44: begin w[31:0] = f_aud_offset; w[63:32] = f_aud_hold_bytes; end
-            7'd45: begin w[0:0] = f_paused; w[1:1] = f_ctl_err; w[15:8] = f_atten; end
+            7'd45: begin w[0:0] = f_paused; w[1:1] = f_ctl_err; w[15:8] = f_atten; w[23:16] = f_gl_trim; w[24:24] = f_gl_en; w[2:2] = f_gl_lag; w[25:25] = f_pll_ok; w[26:26] = f_pll_moving; w[30:27] = f_pll_state; w[31:31] = f_pll_wait; w[7:7] = f_pll_fixed; w[63:32] = f_tm_start; end
             7'd46: begin w[31:0] = f_ovl_gen; w[33:32] = f_ovl_state; w[34:34] = f_ovl_at; w[35:35] = f_ovl_clip; w[39:36] = f_ovl_err; w[47:40] = f_ovl_torn; w[63:48] = f_ovl_late; end
             7'd47: begin w[11:0] = f_ar_x; w[23:12] = f_ar_y; w[63:32] = f_ovl_lines; end
             7'd80: begin w[11:0] = f_raster_w; w[23:12] = f_raster_h; w[25:24] = f_raster_mode; w[26:26] = f_raster_lb; w[28:27] = f_video_out; w[31:29] = f_colour; w[44:32] = f_pic_x0; w[60:48] = f_pic_y0; end
@@ -152,7 +163,7 @@ module ring_words_sys (
             7'd82: begin w[15:0] = f_rum_p0; w[31:16] = f_rum_p1; w[47:32] = f_rum_p2; w[63:48] = f_rum_p3; end
             7'd83: begin w[15:0] = f_rum_p4; w[31:16] = f_rum_p5; w[63:32] = f_rum_changes; end
             7'd84: begin w[19:0] = f_pic_held; w[20:20] = f_pic_mode; w[31:24] = 8'h14; w[63:32] = f_pic_emitted; end
-            7'd85: begin w[31:0] = f_disp_fhold; end
+            7'd85: begin w[31:0] = f_disp_fhold; w[63:32] = f_tm_emit; end
             7'd86: begin w[7:0] = f_vui_matrix; w[15:8] = f_vui_primaries; w[23:16] = f_vui_transfer; w[24:24] = f_vui_full_range; w[25:25] = f_vui_colour_present; w[26:26] = f_colour_override; w[47:32] = f_colour_unsup; w[63:48] = f_colour_mismatch; end
             7'd87: begin w[2:0] = f_display_profile; w[3:3] = f_display_match_refresh; w[4:4] = f_display_240p; w[5:5] = f_display_film_speed; w[6:6] = f_display_wide; w[10:7] = f_display_effective_profile; w[12:11] = f_display_raster_std; w[13:13] = f_display_interlaced; w[14:14] = f_display_deflicker; w[15:15] = f_display_240p_active; w[17:16] = f_display_refresh_match_mode; end
             default: ;

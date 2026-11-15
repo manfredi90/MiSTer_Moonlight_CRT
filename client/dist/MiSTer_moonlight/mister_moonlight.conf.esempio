@@ -13,4 +13,9 @@ MENU=1
 APP="Desktop"
 
 # Opzioni aggiuntive, per esempio: -width 640 -height 480 -bitrate 10000 -fps 30 -pads 2 -quitappafter
-EXTRA="-stats"
+# (-stats: contatori e traccia.csv a fine stream, fino a 12 MB sulla SD: solo per le prove)
+EXTRA=""
+
+# Il log (ultimo_stream.log) va sulla SD all'uscita; LOG_OGNI=<secondi> lo copia anche durante
+# lo stream (utile se il MiSTer si spegne a meta', ma ogni copia riscrive tutto il file)
+LOG_OGNI=0

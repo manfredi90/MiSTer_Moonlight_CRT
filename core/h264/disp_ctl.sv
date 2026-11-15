@@ -83,6 +83,8 @@
 module disp_ctl (
     input  wire         clk,               // clk_sys
     input  wire         rst_n,             // the per-mount reset (fe_rst_n)
+    input  wire         frame,             // (mm 1.5) every refresh's first dot (frame0's crossing, every field)
+    input  wire         gl_en,             // (mm 1.5) the genlock: re-anchor the grid at every refresh
     input  wire         frame0,            // (hd_raster) the raster's frame start -- the top field's first dot,
                                            // (h 0, v 0) -- crossed from clk_vid in the raster's mode (emu)
     input  wire         il,                // P6: the 480i raster (a refresh is a field)
@@ -91,6 +93,8 @@ module disp_ctl (
     // the queue's head (h264/recon_out.sv)
     input  wire         rec_valid,
     input  wire         rec_more,          // recon_out: another picture waits behind the head
+    input  wire         rec_more2,         // (mm 1.5) ... two pictures wait behind it
+    input  wire         gl_lag,            // (mm 1.5) GL_LAG: one picture of reserve (skip on rec_more2)
     input  wire         low_lat,           // the stream's LOW_LATENCY (a level, stable per stream)
     input  wire         pause,             // (0.5) word 34's PAUSE: the STC and the display stand still
     input  wire         aanc,              // (0.5) the audio anchor (aud_play)
@@ -185,6 +189,7 @@ module disp_ctl (
     wire [19:0] p_pick  = prog240_i ? 20'd427664 : 20'd429000;
     wire [19:0] p_skip  = prog240_i ? 20'd415642 : 20'd420420;
     wire        tick = aligned && (tdiv == 9'd0);
+    wire        gl_on = (gl_en === 1'b1);                   // (benches without the port: off)
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             aligned <= 1'b0; tdiv <= '0; il_q <= 1'b0; p240_q <= 1'b0; std_q <= 2'd0; rp <= '0; fpar <= 1'b0;
@@ -195,8 +200,16 @@ module disp_ctl (
                 if (frame0) begin aligned <= 1'b1; tdiv <= 9'd1; rp <= 20'd1; fpar <= 1'b0; end
             end else begin
                 tdiv <= (tdiv == 9'd299) ? 9'd0 : tdiv + 9'd1;
-                rp <= (rp == rf_m1) ? 20'd0 : rp + 20'd1;
-                if (rp == rf_m1) fpar <= !fpar;
+                if (gl_on) begin
+                    // (mm 1.5) the genlock: the raster's refreshes are a line longer or shorter at the
+                    // program's will, so the grid restarts at each one's first dot (and waits there,
+                    // never wrapping on its own); the top field's start is frame0
+                    if (frame) begin rp <= 20'd1; fpar <= frame0 ? 1'b0 : !fpar; end
+                    else if (rp != rf_m1) rp <= rp + 20'd1;
+                end else begin
+                    rp <= (rp == rf_m1) ? 20'd0 : rp + 20'd1;
+                    if (rp == rf_m1) fpar <= !fpar;
+                end
             end
         end
     end
@@ -353,7 +366,9 @@ module disp_ctl (
         end else begin
             rec_take <= 1'b0; rel_valid <= 1'b0;
             // low latency: a head a newer picture waits behind is dropped unseen (line 490)
-            if (sk_pulse && low_lat && have_cur && rec_valid && !rec_end && prep && !ended && rec_more) begin
+            // (mm 1.5) GL_LAG: one decoded picture may wait (a reserve against slow decodes, with the
+            // genlock keeping the rates equal): the head is dropped only when two wait behind it
+            if (sk_pulse && low_lat && have_cur && rec_valid && !rec_end && prep && !ended && (gl_lag ? rec_more2 : rec_more)) begin
                 rec_take <= 1'b1; rel_valid <= 1'b1; rel_store <= rec_store;
                 n_skip <= n_skip + 32'd1;
             end

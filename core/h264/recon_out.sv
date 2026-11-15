@@ -74,6 +74,7 @@ module recon_out #(
     input  wire          srst_n,
     output logic         rec_valid,
     output logic         rec_more,           // P3f: another PICTURE (not the END) waits behind the head
+    output logic         rec_more2,          // (mm 1.5) two pictures wait behind it (GL_LAG's skip)
     input  wire          rec_take,
     output logic         rec_end,            // the END record (end of stream): no store
     output logic [4:0]   rec_store,
@@ -128,6 +129,7 @@ module recon_out #(
     // DPB is idle until the next stream's reset: nothing else is pushed meanwhile.
     logic [10:0] rq_din, rq_dout;
     logic        rq_we, rq_full, rq_empty, rq_rd, rq_valid;
+    logic [5:0]  rq_used;
     logic [7:0]  eos_dly;
     logic        end_q;
     wire         eos_push = eos_dly[7];
@@ -141,7 +143,8 @@ module recon_out #(
     end
     fifo_dc #(.DW(11), .AW(5)) u_rec (
         .wr_clk(clk), .wr_rst_n(rst_n), .din(rq_din), .wr_en(rq_we), .full(rq_full), .wr_free(),
-        .rd_clk(sclk), .rd_rst_n(srst_n), .dout(rq_dout), .rd_en(rq_rd), .empty(rq_empty), .valid(rq_valid));
+        .rd_clk(sclk), .rd_rst_n(srst_n), .dout(rq_dout), .rd_en(rq_rd), .empty(rq_empty), .valid(rq_valid),
+        .rd_used(rq_used));
 
     // ---- the release FIFO: a store, clk_sys -> clk_dec -------------------------------
     logic [4:0] lq_dout;
@@ -187,6 +190,7 @@ module recon_out #(
         if (!srst_n) begin end_s1 <= 1'b0; end_s2 <= 1'b0; end
         else begin end_s1 <= end_q; end_s2 <= end_s1; end
     assign rec_more = rec_valid && !rq_empty && !end_s2;
+    assign rec_more2 = rec_valid && rq_used >= 6'd2 && !end_s2;   // (mm 1.5) pessimistic: never early
     always_ff @(posedge sclk) begin
         if (p_tab) begin
             ra <= tab_a[p_word[9:5]];

@@ -141,13 +141,71 @@ sys_pll sys_pll (
 	.locked   (locked)
 );
 wire clk_vid, clk_vid_dv, vid_locked;
+wire [63:0] vid_reconfig_to_pll, vid_reconfig_from_pll;   // (mm) the raster's frequency, finely
+wire        ctl_gl_en;                   // (mm 1.5) the genlock (word 34's GL_EN, during a session; ring_rd)
+wire        ctl_gl_lag;                  // (mm 1.5) word 34's GL_LAG: one picture of reserve (disp_ctl)
+wire  [7:0] ctl_gl_trim;                 // ... its trim: the raster's frequency in 2^-16, signed, + slower
 vid_pll vid_pll (
 	.refclk   (CLK_50M),
 	.rst      (1'b0),
 	.outclk_0 (clk_vid),
 	.outclk_1 (clk_vid_dv),
-	.locked   (vid_locked)
+	.locked   (vid_locked),
+	.reconfig_to_pll   (vid_reconfig_to_pll),
+	.reconfig_from_pll (vid_reconfig_from_pll)
 );
+// (mm) THE GENLOCK (interface mm 1.5): word 34's GL_TRIM sets the raster's frequency in 2^-16 steps
+// through vid_pll's K alone, gliding (h264/vid_pll_tune.sv); the lines and fields never change
+wire        vt_reset, vt_wait, vt_read, vt_write, vt_moving, vt_ok;
+wire [31:0] vt_k;
+wire  [3:0] vt_state;
+wire        vt_wait_seen, vt_fixed;
+wire  [5:0] vt_addr;
+wire [31:0] vt_rdata, vt_wdata;
+vid_pll_tune vid_pll_tune_inst (
+	.clk              (CLK_50M),
+	.locked           (vid_locked),
+	.gl_en            (ctl_gl_en),             // clk_sys, quasi-static: crossed inside
+	.gl_trim          (ctl_gl_trim),
+	.ok               (vt_ok),
+	.moving           (vt_moving),
+	.k_out            (vt_k),
+	.state            (vt_state),
+	.wait_seen        (vt_wait_seen),
+	.used_fixed       (vt_fixed),
+	.mgmt_reset       (vt_reset),
+	.mgmt_waitrequest (vt_wait),
+	.mgmt_read        (vt_read),
+	.mgmt_write       (vt_write),
+	.mgmt_readdata    (vt_rdata),
+	.mgmt_address     (vt_addr),
+	.mgmt_writedata   (vt_wdata)
+);
+pll_cfg vid_pll_cfg (
+	.mgmt_clk          (CLK_50M),
+	.mgmt_reset        (vt_reset),
+	.mgmt_waitrequest  (vt_wait),
+	.mgmt_read         (vt_read),
+	.mgmt_write        (vt_write),
+	.mgmt_readdata     (vt_rdata),
+	.mgmt_address      (vt_addr),
+	.mgmt_writedata    (vt_wdata),
+	.reconfig_to_pll   (vid_reconfig_to_pll),
+	.reconfig_from_pll (vid_reconfig_from_pll)
+);
+// vid_pll_tune's state for status word 45 (diagnostics): two flops, K taken when two samples agree
+logic [1:0] vt_ok_ss, vt_mv_ss, vt_ws_ss, vt_fx_ss;
+logic [3:0] vt_st_s1, vt_st_s2, vt_st_s;
+logic [31:0] vt_k_s1, vt_k_s2, vt_k_s;
+wire        vt_ok_s = vt_ok_ss[1], vt_moving_s = vt_mv_ss[1];
+always_ff @(posedge clk_sys) begin
+	vt_ok_ss <= {vt_ok_ss[0], vt_ok}; vt_mv_ss <= {vt_mv_ss[0], vt_moving}; vt_ws_ss <= {vt_ws_ss[0], vt_wait_seen}; vt_fx_ss <= {vt_fx_ss[0], vt_fixed};
+	vt_st_s1 <= vt_state; vt_st_s2 <= vt_st_s1;
+	if (vt_st_s1 == vt_st_s2) vt_st_s <= vt_st_s2;
+	vt_k_s1 <= vt_k; vt_k_s2 <= vt_k_s1;
+	if (vt_k_s1 == vt_k_s2) vt_k_s <= vt_k_s2;
+end
+
 
 // OSD "Reset" (status[0]) joins the framework reset. user_rst_qn is a REGISTERED copy
 // because reset_n is consumed as an async clear all over the core (MiSTer_DVD's
@@ -173,7 +231,7 @@ assign LOCKED    = locked & vid_locked;
 //     stock Main truncates the About line at 30 chars and splits CONF_STR on , and ;.
 //   * This string is INSIDE CONF_STR = inside the netlist, so changing it re-rolls the
 //     fit. Set it before the build that will ship, not after.
-`define CORE_VERSION "mm-0.2.1"
+`define CORE_VERSION "mm-0.3.7-gl-lag"
 
 // The OSD definition. Every option, button and file extension here MUST be documented
 // in the manual: tools/docs_check.py parses this block (by its terminator, never a
@@ -383,6 +441,8 @@ wire [127:0] rr_geom_data;          // interface 1.2: {clip viewport word 88, pi
 wire [7:0] rr_geom_ack_seq;
 wire [1:0] rr_geom_error;
 wire        v_clip_en;
+wire        v_gl_en;                 // (mm 1.5) the genlock on clk_vid (sync_gen)
+wire  [7:0] v_gl_trim;
 wire [11:0] v_clip_x, v_clip_y, v_clip_w, v_clip_h;
 wire [32:0] rr_pts;
 wire        disp_ended;                   // disp_ctl: the display took the stream's END
@@ -456,6 +516,9 @@ ring_rd ring_rd_inst (
 	.ctl_pause      (ctl_pause),            // 0.5: program word 34
 	.ctl_err        (ctl_err),
 	.ctl_atten      (ctl_atten),
+	.ctl_gl_en      (ctl_gl_en),            // (mm 1.5) word 34's genlock
+	.ctl_gl_lag     (ctl_gl_lag),
+	.ctl_gl_trim    (ctl_gl_trim),
 	.rumble         (rumble),               // 0.13: program words 36-38, into hps_io
 	.rum_changes    (rum_changes),
 	.st_word        (st_word),
@@ -554,14 +617,15 @@ cdc_reset fe_rst_cdc (
 	.rst_n_out (fe_rst_dec_n)
 );
 
-// The bytes into clk_dec. es_au_end is carried by the reader but not yet by this crossing
-// (roadmap P3e brings the sideband and the decoder's early close).
-wire [41:0] es_data;                      // {pts[32:0], mark, byte}
+// The bytes into clk_dec, with (mm, roadmap P3e) the reader's es_au_end -- the record's last
+// byte -- on a LOW_LATENCY stream: the decoder closes the picture there, not when the next
+// access unit's first slice arrives (one frame of latency less for a game stream).
+wire [42:0] es_data;                      // {au_end, pts[32:0], mark, byte}
 wire        es_valid, es_ready, es_flush, fe_flushed;
-vidfeed_cdc #(.DW(42)) vidfeed_cdc_inst (
+vidfeed_cdc #(.DW(43)) vidfeed_cdc_inst (
 	.wr_clk     (clk_sys),
 	.wr_rst_n   (fe_rst_n),
-	.wr_data    ({rr_pts, rr_mark, rr_byte}),
+	.wr_data    ({rr_au_end & rr_ll, rr_pts, rr_mark, rr_byte}),
 	.wr_valid   (rr_valid),
 	.wr_ready   (rr_ready),
 	.wr_flush   (rr_eos),                 // END_OF_STREAM consumed: every byte was handed over before it
@@ -595,6 +659,7 @@ h264_top h264_top_inst (
 	.es_valid      (es_valid),
 	.es_ready      (es_ready),
 	.es_flush      (es_flush),
+	.es_end        (es_data[42]),
 	.es_mark       (es_data[8]),
 	.es_pts        (es_data[41:9]),
 	.se_valid      (se_valid),
@@ -683,6 +748,8 @@ sync_gen sync_gen_inst (
 	.interlaced (v_il),
 	.prog240    (v_prog240),
 	.std        (v_std),              // P6 steps 5 / 6: 59.94 / 60.00 / 50 Hz (Refresh Rate, below)
+	.gl_en      (1'b0),               // (mm 1.5) the line-trim genlock is retired (a CRT's vertical
+	.gl_trim    (8'd0),               //   count-down jumps at a field a line off): vid_pll_tune instead
 	.nat        (v_nat),              // stage 2: the native raster, taken at a frame's first dot
 	.g_w        (v_rw),
 	.g_h        (v_rh),
@@ -1011,7 +1078,7 @@ wire [40:0] rq_crop;          // P6: the store's crop, to the fit (docs/analog.m
 wire [31:0] rq_nuit, rq_ts;
 wire  [3:0] rq_ps_a, rq_ps_b;
 wire [32:0] rq_pts, rq_pts_b;
-wire        rq_take, rl_valid, rq_more;
+wire        rq_take, rl_valid, rq_more, rq_more2;
 wire  [4:0] rl_store;
 wire [31:0] out_emit, out_rel;
 wire        out_ovf, out_rel_bad;
@@ -1054,6 +1121,7 @@ recon_out #(.NST(20)) recon_out_inst (
 	.srst_n         (fe_rst_n),
 	.rec_valid      (rq_valid),
 	.rec_more       (rq_more),
+	.rec_more2      (rq_more2),
 	.rec_take       (rq_take),
 	.rec_end        (rq_end),
 	.rec_store      (rq_store),
@@ -1125,11 +1193,15 @@ disp_ctl disp_ctl_inst (
 	.clk            (clk_sys),
 	.rst_n          (fe_rst_n),
 	.frame0         (frame0_sys),             // (hd_raster) the raster's frame start, crossed from clk_vid
+	.frame          (frame_sys),              // (mm 1.5) every refresh's start: the grid re-anchors there under the genlock
+	.gl_en          (ctl_gl_en),
 	.il             (raster_il_eff),          // P6: a refresh is a field only on an interlaced raster
 	.prog240        (prog240_eff),
 	.std            (raster_std),             // P6 steps 5 / 6: the refresh grid (59.94 / 60.00 / 50 Hz)
 	.rec_valid      (rq_valid),
 	.rec_more       (rq_more),                // P3f: another picture waits behind the head
+	.rec_more2      (rq_more2),               // (mm 1.5) two do (GL_LAG)
+	.gl_lag         (ctl_gl_lag),
 	.low_lat        (rr_ll),                  // the stream's LOW_LATENCY (the HPS interface's reader)
 	.pause          (ctl_pause),              // 0.5: word 34's PAUSE -- the STC and the display stand still
 	.aanc           (aud_anc),                // 0.5: the audio starts the STC (no picture has)
@@ -1591,14 +1663,15 @@ assign raster_pal     = raster_std[1];
 // at a frame's first dot, the deinterlace mode / the overlay's settings at a refresh's first line --
 // all long after the copy has settled.
 localparam int XW_DN = 1 + 1 + 1 + 2 + 1 + 5*12 + 1 + 5 + 1 + 8 + 8 + 1 + 1 + 2 + 3 +
-                       13 + 13 + 14 + 14 + 28 + 28 + 2 + 2 + 12 + 12 + 12 + 12 + 3 + 3 + 1 + 1 + 1 + 6 + 1 + 4*12;
+                       13 + 13 + 14 + 14 + 28 + 28 + 2 + 2 + 12 + 12 + 12 + 12 + 3 + 3 + 1 + 1 + 1 + 6 + 1 + 4*12 + 1 + 8;
 wire [XW_DN-1:0] xdn_src = {raster_il_eff, prog240_eff, raster_pal, raster_std,
                             geom_nat, geom_rw, geom_rh, geom_l, geom_nt, geom_last,
                             sh_valid, sh_store, sh_field, sh_w, sh_hf, sh_parity, sh_single, 2'b00 /* Weave: no Deinterlace entry */, sh_colour,
                             fit_ow, fit_oh, fit_ox0, fit_oy0, fit_sx, fit_sy, fit_dh_l2, fit_dv_l2,
                             fit_lx, fit_ty, fit_wc, fit_hc, fit_hpf, fit_vpf,
                             rr_sess, at_sel, idle_vis, sh_siting,
-                            fit_clip_en, fit_clip_x, fit_clip_y, fit_clip_w, fit_clip_h};
+                            fit_clip_en, fit_clip_x, fit_clip_y, fit_clip_w, fit_clip_h,
+                            ctl_gl_en, ctl_gl_trim};
 wire [XW_DN-1:0] xdn_dst;
 assign {v_il, v_prog240, v_pal, v_std,
         v_nat, v_rw, v_rh, v_l, v_nt, v_last,
@@ -1606,7 +1679,8 @@ assign {v_il, v_prog240, v_pal, v_std,
         v_fit_ow, v_fit_oh, v_fit_ox0, v_fit_oy0, v_fit_sx, v_fit_sy, v_fit_dh_l2, v_fit_dv_l2,
         v_fit_lx, v_fit_ty, v_fit_wc, v_fit_hc, v_fit_hpf, v_fit_vpf,
         v_sess, v_at_en, v_idle_vis, v_siting,
-        v_clip_en, v_clip_x, v_clip_y, v_clip_w, v_clip_h} = xdn_dst;
+        v_clip_en, v_clip_x, v_clip_y, v_clip_w, v_clip_h,
+        v_gl_en, v_gl_trim} = xdn_dst;
 cdc_snap #(.W(XW_DN)) raster_dn_xing (
 	.src_clk   (clk_sys),
 	.src_rst_n (lock_sys_n),
@@ -1906,6 +1980,21 @@ wire [12:0] st_fit_ow       = sh_valid ? fit_ow : 13'd0;
 wire [12:0] st_fit_oh       = sh_valid ? fit_oh : 13'd0;
 wire [12:0] st_pic_x0       = sh_valid ? fit_ox0[12:0] : 13'd0;   // two's complement (>= -3,736: ow <= 8,191)
 wire [12:0] st_pic_y0       = sh_valid ? fit_oy0[12:0] : 13'd0;
+// (mm 1.5) THE DECODE'S TIMING, for the program's trace: a free 27 MHz count on clk_sys, latched when
+// the front end begins a picture (fe_pic's bit 0 toggles, clk_dec) and when recon_out emits one to the
+// display (out_emit's, clk_dec): their difference is the picture's decode time; tm_now (>> 10) in
+// each status maps them to the program's clock. A single toggling bit crosses safely (pictures are
+// milliseconds apart; two within three cycles would be counted as one).
+logic [31:0] tm27, tm_start, tm_emit;
+logic [2:0]  tm_fp_s, tm_oe_s;
+always_ff @(posedge clk_sys) begin
+	tm27    <= tm27 + 32'd1;
+	tm_fp_s <= {tm_fp_s[1:0], fe_pic[0]};
+	tm_oe_s <= {tm_oe_s[1:0], out_emit[0]};
+	if (tm_fp_s[2] ^ tm_fp_s[1]) tm_start <= tm27;
+	if (tm_oe_s[2] ^ tm_oe_s[1]) tm_emit  <= tm27;
+end
+
 ring_words_sys ring_words_sys_inst (
 	.ix               (st_sys_ix),
 	.f_seq_head       (st_seq),
@@ -1984,6 +2073,17 @@ ring_words_sys ring_words_sys_inst (
 	.f_paused         (ctl_pause),
 	.f_ctl_err        (ctl_err),
 	.f_atten          (ctl_atten),
+	.f_gl_trim        (ctl_gl_trim),
+	.f_gl_en          (ctl_gl_en),
+	.f_gl_lag         (ctl_gl_lag),
+	.f_pll_ok         (vt_ok_s),           // (mm 1.5) vid_pll_tune's state, crossed from CLK_50M
+	.f_pll_moving     (vt_moving_s),
+	.f_tm_start       (tm_start),          // (mm 1.5) the decode's timing, on clk_sys (below)
+	.f_tm_emit        (tm_emit),
+	.f_tm_now         (tm27[31:10]),
+	.f_pll_state      (vt_st_s),
+	.f_pll_wait       (vt_ws_ss[1]),
+	.f_pll_fixed      (vt_fx_ss[1]),
 	.f_ovl_gen        (ovl_gen),           // (interface 0.9) words 46-47: the overlay plane
 	.f_ovl_state      (ovl_state),
 	.f_ovl_at         (ovl_at),

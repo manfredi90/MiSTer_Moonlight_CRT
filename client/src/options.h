@@ -27,6 +27,7 @@ typedef struct {
   bool pacing;
   bool guard;
   bool genlock;
+  bool gl_lag;          /* col genlock: un'immagine di riserva nel core (un quadro di latenza) */
   const char *core_rbf;
 } options;
 

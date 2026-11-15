@@ -109,8 +109,14 @@ static void present(void) { mg_core_overlay_present(canvas, W, H); }
 typedef struct { char name[64]; int id; } app_entry;
 
 enum { ST_CONNECT, ST_PAIR, ST_MAIN, ST_MESSAGE, ST_PCS, ST_PCOPT, ST_EDIT };
-enum { IT_APP, IT_HEADER, IT_BITRATE, IT_AUDIO, IT_QUITAFTER,
+enum { IT_APP, IT_HEADER, IT_BITRATE, IT_AUDIO, IT_QUITAFTER, IT_SYNC,
        IT_QUITAPP, IT_REFRESH, IT_EXIT, IT_PCS };
+
+/* la sincronizzazione col PC: il genlock (il core segue gli arrivi, nessun quadro in più), il
+ * genlock +1 (lo stesso, e il core tiene un'immagine di riserva: un quadro in più), la guardia (un'immagine a ridosso della presa va alla successiva: fino a un quadro in più), nessuna */
+enum { SYNC_GENLOCK, SYNC_GENLOCK_LAG, SYNC_GUARD, SYNC_NONE, N_SYNC };
+static const char *sync_names[N_SYNC] = { "genlock", "genlock +1", "guardia", "nessuna" };
+static int sync_mode;
 
 /* i PC con Sunshine (salvati in menu.cfg come pc=indirizzo|nome) */
 #define MAX_PCS 16
@@ -152,7 +158,9 @@ static double status_until;
 static char last_app[64];
 static char cfg_path[PATH_MAX];
 
-static const int bitrates[] = { 0, 3000, 5000, 8000, 10000, 12000, 15000, 20000 };
+/* fino a 10000: oltre, le immagini grandi superano il quadro di decodifica del core (circa 2,7 ms
+ * + 0,57 us per byte, tracce del 15/11) e la qualità a 640x480 non migliora */
+static const int bitrates[] = { 0, 3000, 5000, 8000, 10000 };
 #define N_BITRATES (int)(sizeof(bitrates) / sizeof(bitrates[0]))
 
 static double now_s(void) {
@@ -188,11 +196,12 @@ static void cfg_load(void) {
     char *v = eq + 1;
     v[strcspn(v, "\r\n")] = 0;
     /* res= e fps= (versioni fino alla 0.1.5) si ignorano: dal menu sempre 640x480 a 60 */
-    if (!strcmp(line, "bitrate")) opt->bitrate = atoi(v);
+    if (!strcmp(line, "bitrate")) { opt->bitrate = atoi(v); if (opt->bitrate > 10000) opt->bitrate = 10000; }
     else if (!strcmp(line, "audio")) opt->audio = atoi(v) != 0;
     else if (!strcmp(line, "quitafter")) opt->quit_after = atoi(v) != 0;
     else if (!strcmp(line, "lastapp")) snprintf(last_app, sizeof(last_app), "%s", v);
     else if (!strcmp(line, "lastpc")) snprintf(last_pc, sizeof(last_pc), "%s", v);
+    else if (!strcmp(line, "sync")) { for (int i = 0; i < N_SYNC; i++) if (!strcmp(v, sync_names[i])) sync_mode = i; }
     else if (!strcmp(line, "pcs")) pcs_saved = true;
     else if (!strcmp(line, "pc") && n_pcs < MAX_PCS) {
       char *bar = strchr(v, '|');
@@ -209,8 +218,8 @@ static void cfg_load(void) {
 static void cfg_save(void) {
   FILE *f = fopen(cfg_path, "w");
   if (!f) return;
-  fprintf(f, "bitrate=%d\naudio=%d\nquitafter=%d\nlastapp=%s\nlastpc=%s\npcs=%d\n",
-          opt->bitrate, opt->audio, opt->quit_after, last_app, last_pc, n_pcs);
+  fprintf(f, "bitrate=%d\naudio=%d\nquitafter=%d\nsync=%s\nlastapp=%s\nlastpc=%s\npcs=%d\n",
+          opt->bitrate, opt->audio, opt->quit_after, sync_names[sync_mode], last_app, last_pc, n_pcs);
   for (int i = 0; i < n_pcs; i++)
     fprintf(f, "pc=%s|%s\n", pcs[i].host, pcs[i].name);
   fclose(f);
@@ -370,6 +379,7 @@ static void rebuild_items(void) {
   items[n_items++] = (item){ IT_BITRATE, -1 };
   items[n_items++] = (item){ IT_AUDIO, -1 };
   items[n_items++] = (item){ IT_QUITAFTER, -1 };
+  items[n_items++] = (item){ IT_SYNC, -1 };
   if (server.currentGame)
     items[n_items++] = (item){ IT_QUITAPP, -1 };
   items[n_items++] = (item){ IT_REFRESH, -1 };
@@ -397,6 +407,7 @@ static void change_setting(int type, int dir) {
   }
   case IT_AUDIO: opt->audio = !opt->audio; break;
   case IT_QUITAFTER: opt->quit_after = !opt->quit_after; break;
+  case IT_SYNC: sync_mode = (sync_mode + dir + N_SYNC) % N_SYNC; break;
   default: return;
   }
   cfg_save();
@@ -417,6 +428,7 @@ static void item_label(const item *it, char *label, size_t ln, char *value, size
     break;
   case IT_AUDIO: snprintf(label, ln, "Audio"); snprintf(value, vn, "< %s >", opt->audio ? "si" : "no"); break;
   case IT_QUITAFTER: snprintf(label, ln, "Chiudi l'app all'uscita"); snprintf(value, vn, "< %s >", opt->quit_after ? "si" : "no"); break;
+  case IT_SYNC: snprintf(label, ln, "Sincronizzazione"); snprintf(value, vn, "< %s >", sync_names[sync_mode]); break;
   case IT_QUITAPP: snprintf(label, ln, "Chiudi l'app aperta sul PC"); break;
   case IT_REFRESH: snprintf(label, ln, "Aggiorna elenco"); break;
   case IT_PCS: snprintf(label, ln, "Cambia PC"); break;
@@ -796,7 +808,10 @@ static void launch(int app) {
   draw_starting(apps[app].name);
   present();
   char msg[200];
-  printf("[menu] avvio %s\n", apps[app].name);
+  opt->genlock = sync_mode == SYNC_GENLOCK || sync_mode == SYNC_GENLOCK_LAG;
+  opt->gl_lag = sync_mode == SYNC_GENLOCK_LAG;
+  opt->guard = sync_mode == SYNC_GUARD;
+  printf("[menu] avvio %s (sincronizzazione: %s)\n", apps[app].name, sync_names[sync_mode]);
   int r = mg_stream_session(&server, opt, apps[app].id, msg, sizeof(msg));
   if (mg_exiting()) return;
   printf("[menu] ritorno al menu\n");
@@ -804,6 +819,16 @@ static void launch(int app) {
   mg_input_set_mode(MG_INPUT_MENU);
   if (r != 0) {
     show_message("Avvio non riuscito", msg, "", false);
+  } else if (opt->genlock && mg_core_genlock_problem()[0]) {
+    /* il genlock chiesto non ha lavorato: lo stream era senza sincronizzazione, va detto */
+    char l1[240];
+    snprintf(l1, sizeof(l1), "Il genlock non ha funzionato: %s.", mg_core_genlock_problem());
+    show_message("Genlock non attivo", l1,
+                 "Lo stream era senza sincronizzazione. Per ora scegli Sincronizzazione: guardia nelle impostazioni.", false);
+  } else if (opt->gl_lag && mg_core_gl_lag_problem()[0]) {
+    char l1[240];
+    snprintf(l1, sizeof(l1), "La riserva non ha funzionato: %s.", mg_core_gl_lag_problem());
+    show_message("Genlock +1 non attivo", l1, "Lo stream era col genlock semplice (senza il quadro in più).", false);
   } else {
     state = ST_MAIN;
     if (msg[0]) set_status(msg, C_DIM);
@@ -923,6 +948,8 @@ int mg_menu_run(options *o, const char *kd) {
   } else {
     snprintf(cfg_path, sizeof(cfg_path), "menu.cfg");
   }
+  /* la sincronizzazione: da menu.cfg se c'è (sync=), se no dalle opzioni (-genlock, -guard) */
+  sync_mode = o->genlock ? (o->gl_lag ? SYNC_GENLOCK_LAG : SYNC_GENLOCK) : o->guard ? SYNC_GUARD : SYNC_NONE;
   if (!o->no_menu_cfg)
     cfg_load();
   /* il core è a 640 pixel e 60 Hz: dal menu sempre 640x480 a 60 immagini al secondo */
