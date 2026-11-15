@@ -56,14 +56,17 @@ stream is always 640x480 at 60 pictures a second (what the core shows 1:1); on t
 `-width`, `-height` and `-fps` remain for tests.
 
 **Sync** (with this repository's core):
-- *genlock*: the core moves its video PLL and the raster runs at the PC's rate (59.94 Hz too),
-  with no added frame of latency. It locks within 10-20 s of the start and after a 240p/480i
-  switch.
-- *genlock +1*: the same, and the core keeps one decoded picture in reserve (about 10 ms more
-  latency). For high bitrates: a picture above ~20 KB takes the core more than a frame to decode,
-  and without the reserve the previous picture is repeated.
-- *guard*: a picture that would land right at the pickup goes to the next one (up to one more
-  frame); *none*: nothing.
+- *genlock* (the default): the core moves its video PLL and the raster runs at the PC's rate
+  (59.94 Hz too), and the core keeps one decoded picture in reserve (about 10 ms more latency
+  than *genlock low latency*). It locks within 10-20 s of the start and after a 240p/480i switch.
+  The reserve covers the large pictures of high bitrates (above ~20 KB a picture takes the core
+  more than a frame to decode) and the irregular arrivals of a Wi-Fi link.
+- *genlock low latency*: the same without the reserve, about 10 ms less latency. Best at
+  5 Mbps or less on a cable: at higher bitrates the large pictures arrive late and the previous
+  picture is repeated.
+- *60 Hz*: the core stays at 60 Hz and a picture that would land right at the pickup goes to the
+  next one (up to one more frame). Only for a PC at exactly 60 Hz: at 59.94 Hz a picture is
+  repeated about every 17 s.
 
 If the genlock does not work (a core without it), the menu says so at the stream's end.
 

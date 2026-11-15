@@ -33,7 +33,7 @@ void mg_core_set_guard(bool on);
 void mg_core_set_genlock(bool on);
 /* With the genlock: the core keeps one picture in reserve (one more frame, like the guard) */
 void mg_core_set_gl_lag(bool on);
-/* After a session with genlock +1: why the reserve was missing ("" if it was there) */
+/* After a session with the genlock's reserve: why the reserve was missing ("" if it was there) */
 const char *mg_core_gl_lag_problem(void);
 /* After a session with the genlock requested: why it did not work ("" if it did) */
 const char *mg_core_genlock_problem(void);

@@ -29,7 +29,7 @@ Changes here:
   GL_LAG keeps one decoded picture in reserve (`h264/disp_ctl.sv` drops the head only when two wait
   behind it): one frame of latency, no repeat when a large picture decodes late. The client measures
   the PC's rate from the RTP timestamps and steers the phase so each picture is ready just before its
-  pickup (`-genlock`, `-genlock-lag`).
+  pickup (`-genlock` with the reserve, `-genlock-low` without it).
 - **The picture closes at its record's end (P3e).** On a LOW_LATENCY stream the reader's `es_au_end`
   crosses to the decoder, which closes the picture there instead of at the next picture's first slice.
 - The core is named H264 (`MiSTer_moonlight/core/H264_*.rbf` for the client, or `_Other`), the pad's J line is upstream's twelve

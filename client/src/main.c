@@ -35,7 +35,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#define MG_VERSION "0.4.1"
+#define MG_VERSION "0.4.2"
 
 static sem_t quit_sem;
 static volatile bool stop_play;
@@ -150,9 +150,10 @@ static void usage(void) {
   printf("  -stickdpad         pass on the digital directions the MiSTer derives from the stick\n");
   printf("  -debuginput        print the inputs forwarded to the PC\n");
   printf("  -nomenucfg         the menu does not read menu.cfg\n");
-  printf("  -guard             phase guard: with a P3e core, no picture right at the pickup\n");
-  printf("  -genlock           genlock: the core tunes its rate and phase to the PC (this repository's core)\n");
-  printf("  -genlock-lag       genlock with one picture in reserve in the core (one more frame of latency)\n");
+  printf("  -genlock           genlock: the core tunes its rate and phase to the PC and keeps one\n"
+         "                     picture in reserve (one more frame of latency; the menu's default)\n");
+  printf("  -genlock-low       genlock low latency: the genlock without the reserve\n");
+  printf("  -60hz              60 Hz: the core stays at 60 Hz, no picture right at the pickup\n");
   printf("  -pcres WxH         the PC's resolution during the stream (Sunshine: resolution from the client)\n");
   printf("  -core PATH         the core to load, without date and extension (default\n"
          "                     MiSTer_moonlight/core/H264, otherwise _Other/H264)\n\n");
@@ -210,9 +211,10 @@ static int parse(int argc, char **argv, options *o) {
     else if (!strcmp(a, "-debuginput")) o->debug_input = true;
     else if (!strcmp(a, "-stickdpad")) o->stick_dpad = true;
     else if (!strcmp(a, "-nomenucfg")) o->no_menu_cfg = true;
-    else if (!strcmp(a, "-guard")) o->guard = true;
-    else if (!strcmp(a, "-genlock")) o->genlock = true;
-    else if (!strcmp(a, "-genlock-lag")) { o->genlock = true; o->gl_lag = true; }
+    /* -guard and -genlock-lag: the names up to 0.4.1 */
+    else if (!strcmp(a, "-60hz") || !strcmp(a, "-guard")) o->guard = true;
+    else if (!strcmp(a, "-genlock") || !strcmp(a, "-genlock-lag")) { o->genlock = true; o->gl_lag = true; }
+    else if (!strcmp(a, "-genlock-low")) { o->genlock = true; o->gl_lag = false; }
     else if (!strcmp(a, "-pcres")) { NEEDV(); if (sscanf(v, "%dx%d", &o->pc_w, &o->pc_h) != 2) o->pc_w = o->pc_h = 0; }
     else if (!strcmp(a, "-core")) { NEEDV(); o->core_rbf = v; }
     else { fprintf(stderr, "Unknown option: %s\n", a); return -1; }

@@ -152,7 +152,7 @@ static char gl_problem[200];           /* why the requested genlock did not work
 const char *mg_core_genlock_problem(void) { return gl_problem; }
 void mg_core_set_guard(bool on) { guard_on = on; }
 void mg_core_set_genlock(bool on) { genlock_req = on; }
-/* genlock +1: the core keeps one picture in reserve (word 34 [25], applied: word 45 [2]) */
+/* the genlock's reserve (Sync: genlock, not genlock low latency): the core keeps one picture in reserve (word 34 [25], applied: word 45 [2]) */
 static bool gl_lag_req;
 static char gl_lag_problem[160];
 void mg_core_set_gl_lag(bool on) { gl_lag_req = on; }
@@ -356,7 +356,7 @@ static void rhythm_au(PDECODE_UNIT du, uint64_t held_us) {
   }
 }
 
-/* ---------- the phase guard (-guard; core with P3e) ----------
+/* ---------- the phase guard (Sync: 60 Hz, -60hz; core with P3e) ----------
  * With the PC at exactly 60.000 Hz the arrivals stay a long time at the same place relative to
  * the core's pickup: far from it, all smooth; near it, every network delay of a few ms makes a
  * picture land now in one frame now in the next (one repeated and one dropped, continuously).
@@ -627,8 +627,8 @@ static void *guard_thread(void *arg) {
             printf("[genlock] the core keeps one picture in reserve (one more frame)\n");
           } else if (((g.w45 >> 1) & 1) || s - g.gl_lag_t0 > 1500000) {
             g.gl_lag_st = 3;
-            snprintf(gl_lag_problem, sizeof(gl_lag_problem), "the loaded core has no reserve (genlock +1)");
-            printf("[genlock] %s: plain genlock without the reserve\n", gl_lag_problem);
+            snprintf(gl_lag_problem, sizeof(gl_lag_problem), "the loaded core has no reserve");
+            printf("[genlock] %s: genlock low latency, without the reserve\n", gl_lag_problem);
             pthread_mutex_lock(&ring_mx);
             if (ring) h264ring_set_gl_lag(ring, 0);
             pthread_mutex_unlock(&ring_mx);
@@ -805,7 +805,7 @@ static void guard_stop(void) {
   tr_end();
   if (g.gl_state == 2 && g.lcnt)
     printf("[genlock] at stream end: mean latency %.1f ms from arrival to screen, while locked (%.0f s; ready after arrival: median %.1f ms)%s\n",
-           g.lsum / g.lcnt / 1000, g.lcnt * 0.5, g.lx50 / 1000, g.lag_ctl ? ", genlock +1" : "");
+           g.lsum / g.lcnt / 1000, g.lcnt * 0.5, g.lx50 / 1000, g.lag_ctl ? ", with the reserve" : ", low latency");
   if (g.gl_state == 2)
     printf("[genlock] at stream end: PC rate %s %+.2f us a frame (%.4f Hz), phase %.2f ms off the line%s\n",
            g.fe_valid ? "measured" : "estimated", g.fe_valid ? g.fe_F : g.gl_integ, 1e6 / (16666.667 + (g.fe_valid ? g.fe_F : g.gl_integ)),
@@ -1210,7 +1210,7 @@ static void guard_report(void) {
            g.fe_valid ? "measured" : "startup estimate (measurement not ready yet)", g.fe_valid ? g.fe_F : g.gl_integ,
            1e6 / (P + (g.fe_valid ? g.fe_F : g.gl_integ)), g.fe_sd / 1000);
   if (g.gl_lag_st)
-    printf("[genlock] reserve (genlock +1): %s\n", g.gl_lag_st == 2 ? "applied" : g.gl_lag_st == 3 ? "refused by the core" : "asked, never applied");
+    printf("[genlock] reserve: %s\n", g.gl_lag_st == 2 ? "applied" : g.gl_lag_st == 3 ? "refused by the core" : "asked, never applied");
   if (g.gl_state == 2 || g.gl_pll_fail)
     printf("[genlock] video PLL: %s%s%s, state %u%s\n",
            (g.w45 >> 25) & 1 ? "read" : "NOT read (the core does not move it)",

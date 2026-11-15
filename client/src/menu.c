@@ -112,12 +112,17 @@ enum { ST_CONNECT, ST_PAIR, ST_MAIN, ST_MESSAGE, ST_PCS, ST_PCOPT, ST_EDIT };
 enum { IT_APP, IT_HEADER, IT_BITRATE, IT_AUDIO, IT_QUITAFTER, IT_SYNC, IT_PCRES,
        IT_QUITAPP, IT_REFRESH, IT_EXIT, IT_PCS };
 
-/* the sync with the PC: the genlock (the core follows the PC, no extra frame), genlock +1 (the
- * same, and the core keeps one picture in reserve), the guard (a picture landing right at the
- * pickup goes to the next one: up to one more frame), none */
-enum { SYNC_GENLOCK, SYNC_GENLOCK_LAG, SYNC_GUARD, SYNC_NONE, N_SYNC };
-static const char *sync_names[N_SYNC] = { "genlock", "genlock +1", "guard", "none" };
-static const char *sync_names_old[N_SYNC] = { "genlock", "genlock +1", "guardia", "nessuna" };   /* menu.cfg up to 0.3.7 */
+/* the sync with the PC: the genlock (the core follows the PC and keeps one decoded picture in
+ * reserve: one more frame, the default), the genlock low latency (the same without the reserve),
+ * 60 Hz (the core stays at 60 Hz; a picture landing right at the pickup goes to the next one) */
+enum { SYNC_GENLOCK, SYNC_GENLOCK_LOW, SYNC_60HZ, N_SYNC };
+static const char *sync_names[N_SYNC] = { "genlock", "genlock low latency", "60 Hz" };
+/* menu.cfg up to 0.4.1: "genlock +1" is today's genlock; the old plain "genlock" becomes the
+ * default genlock too; guard and none (and the Italian names) become 60 Hz */
+static const struct { const char *name; int mode; } sync_old[] = {
+  { "genlock +1", SYNC_GENLOCK }, { "guard", SYNC_60HZ }, { "none", SYNC_60HZ },
+  { "guardia", SYNC_60HZ }, { "nessuna", SYNC_60HZ },
+};
 static int sync_mode;
 
 /* the PC's resolution during the stream (Sunshine sets it, with "Use resolution provided by the
@@ -212,7 +217,10 @@ static void cfg_load(void) {
     else if (!strcmp(line, "quitafter")) opt->quit_after = atoi(v) != 0;
     else if (!strcmp(line, "lastapp")) snprintf(last_app, sizeof(last_app), "%s", v);
     else if (!strcmp(line, "lastpc")) snprintf(last_pc, sizeof(last_pc), "%s", v);
-    else if (!strcmp(line, "sync")) { for (int i = 0; i < N_SYNC; i++) if (!strcmp(v, sync_names[i]) || !strcmp(v, sync_names_old[i])) sync_mode = i; }
+    else if (!strcmp(line, "sync")) {
+      for (int i = 0; i < N_SYNC; i++) if (!strcmp(v, sync_names[i])) sync_mode = i;
+      for (size_t i = 0; i < sizeof(sync_old) / sizeof(sync_old[0]); i++) if (!strcmp(v, sync_old[i].name)) sync_mode = sync_old[i].mode;
+    }
     else if (!strcmp(line, "pcres")) { pcres_i = 0; for (int i = 1; i < N_PCRES; i++) if (!strcmp(v, pcres[i].name)) pcres_i = i; }
     else if (!strcmp(line, "pcs")) pcs_saved = true;
     else if (!strcmp(line, "pc") && n_pcs < MAX_PCS) {
@@ -821,9 +829,9 @@ static void launch(int app) {
   draw_starting(apps[app].name);
   present();
   char msg[200];
-  opt->genlock = sync_mode == SYNC_GENLOCK || sync_mode == SYNC_GENLOCK_LAG;
-  opt->gl_lag = sync_mode == SYNC_GENLOCK_LAG;
-  opt->guard = sync_mode == SYNC_GUARD;
+  opt->genlock = sync_mode == SYNC_GENLOCK || sync_mode == SYNC_GENLOCK_LOW;
+  opt->gl_lag = sync_mode == SYNC_GENLOCK;
+  opt->guard = sync_mode == SYNC_60HZ;
   opt->pc_w = pcres[pcres_i].w;
   opt->pc_h = pcres[pcres_i].h;
   printf("[menu] starting %s (sync: %s, PC resolution: %s)\n", apps[app].name, sync_names[sync_mode], pcres[pcres_i].name);
@@ -839,11 +847,11 @@ static void launch(int app) {
     char l1[240];
     snprintf(l1, sizeof(l1), "The genlock did not work: %s.", mg_core_genlock_problem());
     show_message("Genlock not active", l1,
-                 "The stream had no sync. For now choose Sync: guard in the settings.", false);
+                 "The stream had no sync. For now choose Sync: 60 Hz in the settings.", false);
   } else if (opt->gl_lag && mg_core_gl_lag_problem()[0]) {
     char l1[240];
     snprintf(l1, sizeof(l1), "The reserve did not work: %s.", mg_core_gl_lag_problem());
-    show_message("Genlock +1 not active", l1, "The stream had the plain genlock (without the extra frame).", false);
+    show_message("Genlock reserve not active", l1, "The stream had the genlock low latency (without the extra frame).", false);
   } else {
     state = ST_MAIN;
     if (msg[0]) set_status(msg, C_DIM);
@@ -963,10 +971,10 @@ int mg_menu_run(options *o, const char *kd) {
   } else {
     snprintf(cfg_path, sizeof(cfg_path), "menu.cfg");
   }
-  /* the sync: from menu.cfg if there (sync=), otherwise from the options (-genlock, -guard) */
-  /* without -genlock or -guard: the genlock (this repository's core has it; with another core
-   * the menu says so at the stream's end) */
-  sync_mode = o->genlock ? (o->gl_lag ? SYNC_GENLOCK_LAG : SYNC_GENLOCK) : o->guard ? SYNC_GUARD : SYNC_GENLOCK;
+  /* the sync: from menu.cfg if there (sync=), otherwise from the options (-genlock,
+   * -genlock-low, -60hz); without them the genlock (this repository's core has it; with another
+   * core the menu says so at the stream's end) */
+  sync_mode = o->genlock ? (o->gl_lag ? SYNC_GENLOCK : SYNC_GENLOCK_LOW) : o->guard ? SYNC_60HZ : SYNC_GENLOCK;
   pcres_i = 0;
   for (int i = 1; i < N_PCRES; i++) if (pcres[i].w == o->pc_w && pcres[i].h == o->pc_h) pcres_i = i;
   if (!o->no_menu_cfg)
