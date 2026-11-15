@@ -27,6 +27,7 @@ typedef struct {
   bool pacing;
   bool guard;
   bool genlock;
+  int pc_w, pc_h;       /* la risoluzione del PC durante lo stream (0: invariata) */
   bool gl_lag;          /* col genlock: un'immagine di riserva nel core (un quadro di latenza) */
   const char *core_rbf;
 } options;

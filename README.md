@@ -12,6 +12,9 @@ raster follows the PC's own frame rate (genlock); the stock H264 core (480i at 5
   the PC's rate, with no added frame of latency; *genlock +1* also keeps one decoded picture in
   reserve (one frame of latency, for high bitrates: a picture above ~20 KB takes the core more
   than a frame to decode); *guardia* holds a picture that would land on the pickup.
+- *Risoluzione del PC*: Sunshine sets the PC's desktop to 640x480, 1024x768, 1280x960 or 1280x720
+  for the stream (needs Sunshine's display device resolution on *automatic*), so a 4:3 desktop
+  fills the screen instead of being letterboxed into the 640x480 stream.
 - Pads, keyboard and mouse through the core (Main keeps `/dev/input` while a core runs),
   rumble on the MiSTer's pads, mouse mode on the pad.
 

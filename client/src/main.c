@@ -35,7 +35,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#define MG_VERSION "0.3.0"
+#define MG_VERSION "0.3.1"
 
 static sem_t quit_sem;
 static volatile bool stop_play;
@@ -154,6 +154,7 @@ static void usage(void) {
   printf("  -guard             guardia di fase: col core con la P3e, nessuna immagine a ridosso della presa\n");
   printf("  -genlock           genlock: il core accorda la sua fase agli arrivi (core di questo repository)\n");
   printf("  -genlock-lag       genlock con un'immagine di riserva nel core (un quadro in più, come la guardia)\n");
+  printf("  -pcres LxA         risoluzione del PC durante lo stream (Sunshine: risoluzione automatica)\n");
   printf("  -core PERCORSO     il core da caricare, senza data ed estensione (predefinito _Other/H264)\n\n");
   printf("Durante lo stream: Select+Start+LB+RB o Ctrl+Alt+Shift+Q tornano al menu,\n");
   printf("Select+Start = tasto Guide, Start tenuto 1 s = modalita' mouse.\n");
@@ -213,6 +214,7 @@ static int parse(int argc, char **argv, options *o) {
     else if (!strcmp(a, "-guard")) o->guard = true;
     else if (!strcmp(a, "-genlock")) o->genlock = true;
     else if (!strcmp(a, "-genlock-lag")) { o->genlock = true; o->gl_lag = true; }
+    else if (!strcmp(a, "-pcres")) { NEEDV(); if (sscanf(v, "%dx%d", &o->pc_w, &o->pc_h) != 2) o->pc_w = o->pc_h = 0; }
     else if (!strcmp(a, "-core")) { NEEDV(); o->core_rbf = v; }
     else { fprintf(stderr, "Opzione sconosciuta: %s\n", a); return -1; }
   }
@@ -282,7 +284,13 @@ int mg_stream_session(PSERVER_DATA server, options *o, int app_id, char *msg, si
   }
 
   int pads = o->pads < 1 ? 1 : o->pads > 4 ? 4 : o->pads;
-  int ret = gs_start_app(server, &sc, app_id, false, false, (1 << pads) - 1);
+  /* la risoluzione del PC: Sunshine la imposta (e la ripristina a fine stream) dal mode= del
+   * lancio, se il client chiede di ottimizzare (sops) e Sunshine ha la risoluzione "automatica" nelle
+   * impostazioni del dispositivo video; lo stream resta 640x480 */
+  bool sops = o->pc_w > 0 && o->pc_h > 0;
+  if (sops)
+    printf("Risoluzione del PC chiesta a Sunshine: %dx%d (serve la risoluzione automatica nelle sue impostazioni)\n", o->pc_w, o->pc_h);
+  int ret = gs_start_app(server, &sc, app_id, sops, false, (1 << pads) - 1, sops ? o->pc_w : 0, sops ? o->pc_h : 0);
   if (ret != GS_OK) {
     snprintf(msg, msglen, "Avvio dell'app fallito (%d): %s", ret, gs_error ? gs_error : "");
     fprintf(stderr, "%s\n", msg);

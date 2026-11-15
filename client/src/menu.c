@@ -109,7 +109,7 @@ static void present(void) { mg_core_overlay_present(canvas, W, H); }
 typedef struct { char name[64]; int id; } app_entry;
 
 enum { ST_CONNECT, ST_PAIR, ST_MAIN, ST_MESSAGE, ST_PCS, ST_PCOPT, ST_EDIT };
-enum { IT_APP, IT_HEADER, IT_BITRATE, IT_AUDIO, IT_QUITAFTER, IT_SYNC,
+enum { IT_APP, IT_HEADER, IT_BITRATE, IT_AUDIO, IT_QUITAFTER, IT_SYNC, IT_PCRES,
        IT_QUITAPP, IT_REFRESH, IT_EXIT, IT_PCS };
 
 /* la sincronizzazione col PC: il genlock (il core segue gli arrivi, nessun quadro in più), il
@@ -117,6 +117,15 @@ enum { IT_APP, IT_HEADER, IT_BITRATE, IT_AUDIO, IT_QUITAFTER, IT_SYNC,
 enum { SYNC_GENLOCK, SYNC_GENLOCK_LAG, SYNC_GUARD, SYNC_NONE, N_SYNC };
 static const char *sync_names[N_SYNC] = { "genlock", "genlock +1", "guardia", "nessuna" };
 static int sync_mode;
+
+/* la risoluzione del PC durante lo stream (Sunshine la imposta, con la risoluzione "automatica"
+ * nelle impostazioni del dispositivo video, e la ripristina): non tutti i giochi le hanno tutte.
+ * Lo stream resta 640x480: 1280x720 arriva con le bande */
+static const struct { const char *name; int w, h; } pcres[] = {
+  { "no", 0, 0 }, { "640x480", 640, 480 }, { "1024x768", 1024, 768 }, { "1280x960", 1280, 960 }, { "1280x720", 1280, 720 },
+};
+#define N_PCRES ((int)(sizeof(pcres) / sizeof(pcres[0])))
+static int pcres_i;
 
 /* i PC con Sunshine (salvati in menu.cfg come pc=indirizzo|nome) */
 #define MAX_PCS 16
@@ -202,6 +211,7 @@ static void cfg_load(void) {
     else if (!strcmp(line, "lastapp")) snprintf(last_app, sizeof(last_app), "%s", v);
     else if (!strcmp(line, "lastpc")) snprintf(last_pc, sizeof(last_pc), "%s", v);
     else if (!strcmp(line, "sync")) { for (int i = 0; i < N_SYNC; i++) if (!strcmp(v, sync_names[i])) sync_mode = i; }
+    else if (!strcmp(line, "pcres")) { for (int i = 0; i < N_PCRES; i++) if (!strcmp(v, pcres[i].name)) pcres_i = i; }
     else if (!strcmp(line, "pcs")) pcs_saved = true;
     else if (!strcmp(line, "pc") && n_pcs < MAX_PCS) {
       char *bar = strchr(v, '|');
@@ -218,8 +228,8 @@ static void cfg_load(void) {
 static void cfg_save(void) {
   FILE *f = fopen(cfg_path, "w");
   if (!f) return;
-  fprintf(f, "bitrate=%d\naudio=%d\nquitafter=%d\nsync=%s\nlastapp=%s\nlastpc=%s\npcs=%d\n",
-          opt->bitrate, opt->audio, opt->quit_after, sync_names[sync_mode], last_app, last_pc, n_pcs);
+  fprintf(f, "bitrate=%d\naudio=%d\nquitafter=%d\nsync=%s\npcres=%s\nlastapp=%s\nlastpc=%s\npcs=%d\n",
+          opt->bitrate, opt->audio, opt->quit_after, sync_names[sync_mode], pcres[pcres_i].name, last_app, last_pc, n_pcs);
   for (int i = 0; i < n_pcs; i++)
     fprintf(f, "pc=%s|%s\n", pcs[i].host, pcs[i].name);
   fclose(f);
@@ -380,6 +390,7 @@ static void rebuild_items(void) {
   items[n_items++] = (item){ IT_AUDIO, -1 };
   items[n_items++] = (item){ IT_QUITAFTER, -1 };
   items[n_items++] = (item){ IT_SYNC, -1 };
+  items[n_items++] = (item){ IT_PCRES, -1 };
   if (server.currentGame)
     items[n_items++] = (item){ IT_QUITAPP, -1 };
   items[n_items++] = (item){ IT_REFRESH, -1 };
@@ -408,6 +419,7 @@ static void change_setting(int type, int dir) {
   case IT_AUDIO: opt->audio = !opt->audio; break;
   case IT_QUITAFTER: opt->quit_after = !opt->quit_after; break;
   case IT_SYNC: sync_mode = (sync_mode + dir + N_SYNC) % N_SYNC; break;
+  case IT_PCRES: pcres_i = (pcres_i + dir + N_PCRES) % N_PCRES; break;
   default: return;
   }
   cfg_save();
@@ -429,6 +441,7 @@ static void item_label(const item *it, char *label, size_t ln, char *value, size
   case IT_AUDIO: snprintf(label, ln, "Audio"); snprintf(value, vn, "< %s >", opt->audio ? "si" : "no"); break;
   case IT_QUITAFTER: snprintf(label, ln, "Chiudi l'app all'uscita"); snprintf(value, vn, "< %s >", opt->quit_after ? "si" : "no"); break;
   case IT_SYNC: snprintf(label, ln, "Sincronizzazione"); snprintf(value, vn, "< %s >", sync_names[sync_mode]); break;
+  case IT_PCRES: snprintf(label, ln, "Risoluzione del PC"); snprintf(value, vn, "< %s >", pcres[pcres_i].name); break;
   case IT_QUITAPP: snprintf(label, ln, "Chiudi l'app aperta sul PC"); break;
   case IT_REFRESH: snprintf(label, ln, "Aggiorna elenco"); break;
   case IT_PCS: snprintf(label, ln, "Cambia PC"); break;
@@ -811,7 +824,9 @@ static void launch(int app) {
   opt->genlock = sync_mode == SYNC_GENLOCK || sync_mode == SYNC_GENLOCK_LAG;
   opt->gl_lag = sync_mode == SYNC_GENLOCK_LAG;
   opt->guard = sync_mode == SYNC_GUARD;
-  printf("[menu] avvio %s (sincronizzazione: %s)\n", apps[app].name, sync_names[sync_mode]);
+  opt->pc_w = pcres[pcres_i].w;
+  opt->pc_h = pcres[pcres_i].h;
+  printf("[menu] avvio %s (sincronizzazione: %s, risoluzione del PC: %s)\n", apps[app].name, sync_names[sync_mode], pcres[pcres_i].name);
   int r = mg_stream_session(&server, opt, apps[app].id, msg, sizeof(msg));
   if (mg_exiting()) return;
   printf("[menu] ritorno al menu\n");
@@ -952,6 +967,8 @@ int mg_menu_run(options *o, const char *kd) {
   /* senza -genlock né -guard: il genlock (il core di questo repository lo ha; con un altro core il
    * menu lo dice a fine stream) */
   sync_mode = o->genlock ? (o->gl_lag ? SYNC_GENLOCK_LAG : SYNC_GENLOCK) : o->guard ? SYNC_GUARD : SYNC_GENLOCK;
+  pcres_i = 0;
+  for (int i = 1; i < N_PCRES; i++) if (pcres[i].w == o->pc_w && pcres[i].h == o->pc_h) pcres_i = i;
   if (!o->no_menu_cfg)
     cfg_load();
   /* il core è a 640 pixel e 60 Hz: dal menu sempre 640x480 a 60 immagini al secondo */
