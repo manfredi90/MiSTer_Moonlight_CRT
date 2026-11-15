@@ -13,8 +13,9 @@ raster follows the PC's own frame rate (genlock); the stock H264 core (480i at 5
   reserve (one frame of latency, for high bitrates: a picture above ~20 KB takes the core more
   than a frame to decode); *guardia* holds a picture that would land on the pickup.
 - *Risoluzione del PC*: Sunshine sets the PC's desktop to 640x480, 1024x768, 1280x960 or 1280x720
-  for the stream (needs Sunshine's display device resolution on *automatic*), so a 4:3 desktop
-  fills the screen instead of being letterboxed into the 640x480 stream.
+  for the stream, so a 4:3 desktop fills the screen instead of being letterboxed into the 640x480
+  stream. Needs a recent Sunshine with *Advanced Display Options > Resolution: "Use resolution
+  provided by the client"* (one from a few months before November 2026 did not change it).
 - Pads, keyboard and mouse through the core (Main keeps `/dev/input` while a core runs),
   rumble on the MiSTer's pads, mouse mode on the pad.
 

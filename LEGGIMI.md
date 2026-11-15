@@ -49,9 +49,10 @@ Se il genlock non lavora (core senza genlock), a fine stream il menu lo dice.
 porta il desktop a quella risoluzione e a fine stream rimette la sua. Con un desktop 16:9 lo stream
 640x480 arriva con le bande nere sopra e sotto (le aggiunge Sunshine); con una risoluzione 4:3
 l'immagine riempie lo schermo. Lo stream resta 640x480 (1280x720 quindi ha ancora le bande).
-Serve, nelle impostazioni di Sunshine (Audio/Video, dispositivo video), la risoluzione
-*automatica* (quella chiesta da Moonlight), e il monitor del PC (o un display virtuale) deve
-accettarla. Da riga di comando: `-pcres 1024x768`.
+Serve una versione recente di Sunshine (una di qualche mese prima di novembre 2026 non cambiava
+la risoluzione) con, nelle impostazioni, **Advanced Display Options > Resolution: "Use resolution
+provided by the client"**; il monitor del PC (o un display virtuale) deve accettare la risoluzione.
+Da riga di comando: `-pcres 1024x768`.
 Con `-stats` il log dice ogni 10 s a quanti fps va il PC e scrive `traccia.csv` (solo per le prove).
 
 Sunshine riceve la frequenza dei quadri del core: 59,94 a 480i (con *Refresh Rate* su Auto
