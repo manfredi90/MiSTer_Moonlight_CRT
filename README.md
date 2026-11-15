@@ -3,15 +3,17 @@
 A [Moonlight](https://moonlight-stream.org) client for [Sunshine](https://github.com/LizardByte/Sunshine)
 that runs on the MiSTer FPGA's ARM and plays the stream through the
 [H264 core](https://github.com/owenb321/MiSTer_h264_decoder), which decodes H.264 in the FPGA.
-It is aimed at CRTs. With the core in `core/` the picture is 640 square pixels wide and every
-mode (480i, 480p, 240p) runs at exactly 60.000 Hz; the stock H264 core (480i at 59.94 Hz) works too.
+It is aimed at CRTs. With the core in `core/` the picture is 640 square pixels wide and the
+raster follows the PC's own frame rate (genlock); the stock H264 core (480i at 59.94 Hz) works too.
 
-- On-screen menu (drawn in the core's overlay plane): Sunshine's apps, bitrate, audio, pairing
-  with an on-screen PIN. The stream is always 640x480 at 60 fps.
+- On-screen menu (drawn in the core's overlay plane): the list of PCs, Sunshine's apps, bitrate,
+  audio, sync, pairing with an on-screen PIN. The stream is always 640x480 at 60 fps.
+- Sync with the PC (core in `core/`): *genlock* moves the core's video PLL so its raster runs at
+  the PC's rate, with no added frame of latency; *genlock +1* also keeps one decoded picture in
+  reserve (one frame of latency, for high bitrates: a picture above ~20 KB takes the core more
+  than a frame to decode); *guardia* holds a picture that would land on the pickup.
 - Pads, keyboard and mouse through the core (Main keeps `/dev/input` while a core runs),
   rumble on the MiSTer's pads, mouse mode on the pad.
-- Sunshine is asked for the core's own frame rate (59.94 fps on a 59.94 Hz raster), so the
-  core never drops or repeats a frame.
 
 ## Layout
 

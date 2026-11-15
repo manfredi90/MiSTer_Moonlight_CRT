@@ -949,7 +949,9 @@ int mg_menu_run(options *o, const char *kd) {
     snprintf(cfg_path, sizeof(cfg_path), "menu.cfg");
   }
   /* la sincronizzazione: da menu.cfg se c'è (sync=), se no dalle opzioni (-genlock, -guard) */
-  sync_mode = o->genlock ? (o->gl_lag ? SYNC_GENLOCK_LAG : SYNC_GENLOCK) : o->guard ? SYNC_GUARD : SYNC_NONE;
+  /* senza -genlock né -guard: il genlock (il core di questo repository lo ha; con un altro core il
+   * menu lo dice a fine stream) */
+  sync_mode = o->genlock ? (o->gl_lag ? SYNC_GENLOCK_LAG : SYNC_GENLOCK) : o->guard ? SYNC_GUARD : SYNC_GENLOCK;
   if (!o->no_menu_cfg)
     cfg_load();
   /* il core è a 640 pixel e 60 Hz: dal menu sempre 640x480 a 60 immagini al secondo */

@@ -30,15 +30,21 @@ riscritto sull'ARM, che regge solo bitrate bassi.
 
 ## Impostazioni
 
-Nel menu: bitrate (automatico = 10 Mbps), audio, chiusura dell'app all'uscita. Le scelte
+Nel menu: bitrate (automatico = 10 Mbps), audio, chiusura dell'app all'uscita, sincronizzazione. Le scelte
 restano in `MiSTer_moonlight/menu.cfg`, con l'elenco dei PC. Lo stream è sempre 640x480 a 60 immagini al secondo
 (quanto il core mostra 1:1); da riga di comando `-width`, `-height` e `-fps` restano per le prove.
 
-Sul PC conviene una modalità video a **60,000 Hz esatti**: la 640x480 "60 Hz" standard è in realtà
-59,94 Hz, e lo scarto fa saltare o ripetere un'immagine a raffiche ogni ~20 secondi. Va bene una
-1280x720 a 60 Hz (74,25 MHz, già esatta) oppure una 640x480 personalizzata (pannello NVIDIA,
-tempistica manuale): orizzontale 640/16/96/800, verticale 480/10/2/525, clock pixel 25,2 MHz.
-Con `-stats` il log dice ogni 10 s a quanti fps va il PC.
+**Sincronizzazione** (col core di questo repository):
+- *genlock*: il core muove il suo PLL video e il raster va alla frequenza del PC (anche 59,94 Hz),
+  senza quadri di latenza in più. Si aggancia in 10-20 s dall'avvio e dopo un cambio 240p/480i.
+- *genlock +1*: lo stesso, e il core tiene un'immagine decodificata di riserva (un quadro di
+  latenza in più). Per i bitrate alti: un'immagine sopra i ~20 KB richiede al core più di un
+  quadro di decodifica, e senza riserva viene ripetuta l'immagine precedente.
+- *guardia*: un'immagine che arriverebbe a ridosso della presa va alla successiva (fino a un quadro
+  in più); *nessuna*: niente.
+
+Se il genlock non lavora (core senza genlock), a fine stream il menu lo dice.
+Con `-stats` il log dice ogni 10 s a quanti fps va il PC e scrive `traccia.csv` (solo per le prove).
 
 Sunshine riceve la frequenza dei quadri del core: 59,94 a 480i (con *Refresh Rate* su Auto
 il core resta a 59,94), 50 se il core è a 50 Hz. Così nessun frame viene saltato o ripetuto.
@@ -46,8 +52,8 @@ il core resta a 59,94), 50 se il core è a 50 Hz. Così nessun frame viene salta
 ## Il core di questo repository
 
 Il core in `core/` (artefatto `H264_core` delle GitHub Actions) ha il quadro largo **640 pixel**
-e va a **60,000 Hz esatti** in tutti i modi, con righe tutte uguali: uno stream 640x480 arriva 1:1,
-uno 320x240 esattamente x2, senza ridimensionamenti in orizzontale. Sunshine riceve 60 fps.
+con righe tutte uguali: uno stream 640x480 arriva 1:1, uno 320x240 esattamente x2, senza
+ridimensionamenti in orizzontale. Senza genlock va a 60,000 Hz esatti; col genlock segue il PC.
 
 Nell'OSD del core: *Output Mode* 15kHz (480i) o 31kHz (480p); a 15kHz, *15kHz Mode* 240p fa
 passare lo stream a 240p (il menu resta a 480i; lo stream 640x480 a righe alterne).
