@@ -514,7 +514,8 @@ static struct {
   /* la stima della frequenza del PC all'avvio del genlock (FLL) */
   bool fll_done;
   /* il ritmo del PC (timestamp RTP) per il genlock */
-  bool rtp_have, q_init, gl_locked, d_have, gl_relock, p240;
+  bool rtp_have, q_init, gl_locked, d_have, gl_relock, p240, rtp_prev_have;
+  double rtp_prev_us;
   uint32_t rtp_last;
   int64_t rtp64;
   double d_ref, dmin, dmin_t, q, q_tgt, gl_bad_t0, gl_phv, gl_eema;
@@ -749,7 +750,7 @@ static void guard_start(void) {
   g.fe_have = g.fe_valid = false; g.fe_n = g.fe_i = g.fe_cnt = 0; g.fe_F = g.fe_sd = 0; g.fe_ta = 0;
   g.fe_logged = 0; g.fe_rejected = 0;
   g.fll_n = 0;
-  g.rtp_have = g.q_init = g.gl_locked = g.d_have = g.gl_relock = false;
+  g.rtp_have = g.q_init = g.gl_locked = g.d_have = g.gl_relock = g.rtp_prev_have = false;
   g.p240 = ci.p240;
   g.gl_eema = 5000;
   g.d_ref = g.dmin = g.dmin_t = g.q = g.q_tgt = g.gl_bad_t0 = g.gl_phv = 0;
@@ -930,9 +931,18 @@ static void guard_wait(bool idr, uint64_t *held_us, PDECODE_UNIT du) {
       g.d_have = true; g.d_ref = d; g.dmin = 0; g.xh_i = g.xh_n = g.xh_cnt = 0; g.q_init = false;
       g.fe_have = false; g.fe_n = g.fe_i = g.fe_cnt = 0;
     }
-    g.xh[g.xh_i] = (float)(d - g.d_ref);
-    g.xh_i = (g.xh_i + 1) % G_XH;
-    if (g.xh_n < G_XH) g.xh_n++;
+    /* nei ritardi, solo le immagini a un quadro dalla precedente (timestamp RTP): sul desktop fermo
+     * Sunshine manda immagini solo quando lo schermo cambia, e quella dopo una pausa arriva con un
+     * ritardo che non è della rete (15/11, i primi 20 s sul desktop prima di aprire il gioco: margine
+     * 48 ms con tutte le immagini, 4-6 ms con queste) */
+    bool reg_step = g.rtp_prev_have && fabs(rtp_us - g.rtp_prev_us - P) < 0.25 * P;
+    g.rtp_prev_us = rtp_us;
+    g.rtp_prev_have = true;
+    if (reg_step) {
+      g.xh[g.xh_i] = (float)(d - g.d_ref);
+      g.xh_i = (g.xh_i + 1) % G_XH;
+      if (g.xh_n < G_XH) g.xh_n++;
+    }
     if (++g.xh_cnt >= 30 && g.xh_n >= 60) {
       /* ogni mezzo secondo, sui ritardi delle ultime 1200 immagini (20 s): la base è il 3 % (non il
        * minimo: un solo timestamp anomalo la falserebbe per minuti -- sul MiSTer, appena acceso, un
