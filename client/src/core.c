@@ -434,6 +434,8 @@ static void pace_wait(uint64_t *held_us, bool *forced) {
 #define G_XH          1200        /* il genlock: i ritardi delle ultime 1200 immagini (20 s) */
 #define G_FE          1800        /* il genlock: la frequenza del PC sulle ultime 1800 immagini (30 s) */
 #define G_FE_MIN_S    10.0        /* ... usata da 10 s di misura (prima, la stima d'avvio di 4 s) */
+#define G_FE_MAX_US   40.0        /* ... buona entro +-40 us a quadro (il PLL arriva a +-32) */
+#define G_FE_MAX_SD_US 1500.0     /* ... e con la fase entro 1,5 ms (scarto quadratico) dalla retta */
 /* La trattenuta delle immagini in anticipo è spenta: due versioni (fino a dopo / fino a prima della
  * presa precedente) hanno peggiorato le cose sul MiSTer (tracce del 14/11), e il modello dei tempi
  * del core che le giustificava non regge con la seconda traccia. Resta il codice, spento. */
@@ -506,7 +508,8 @@ static struct {
   double fe_x[G_FE], fe_y[G_FE];
   unsigned fe_i, fe_n, fe_cnt;
   bool fe_have, fe_valid;
-  double fe_prev, fe_phu, fe_C, fe_ta, fe_w, fe_t0, fe_F, fe_sd;
+  double fe_prev, fe_phu, fe_C, fe_ta, fe_w, fe_t0, fe_F, fe_sd, fe_logged;
+  unsigned fe_rejected;
   unsigned r_n;
 } g = { .mx = PTHREAD_MUTEX_INITIALIZER };
 
@@ -719,6 +722,7 @@ static void guard_start(void) {
   g.fll_done = false;
   g.fll_start = g.fll_t0 = g.fll_prev = g.fll_phu = g.fll_sx = g.fll_sy = g.fll_sxx = g.fll_sxy = 0;
   g.fe_have = g.fe_valid = false; g.fe_n = g.fe_i = g.fe_cnt = 0; g.fe_F = g.fe_sd = 0; g.fe_ta = 0;
+  g.fe_logged = 0; g.fe_rejected = 0;
   g.fll_n = 0;
   g.rtp_have = g.q_init = g.gl_locked = g.d_have = g.gl_relock = false;
   g.p240 = ci.p240;
@@ -752,6 +756,10 @@ static void guard_stop(void) {
   pthread_join(g.th, NULL);
   g.th_ok = false;
   tr_end();
+  if (g.gl_state == 2)
+    printf("[genlock] a fine stream: frequenza del PC %s %+.2f us a quadro (%.4f Hz), fase a %.2f ms dalla retta%s\n",
+           g.fe_valid ? "misurata" : "stimata", g.fe_valid ? g.fe_F : g.gl_integ, 1e6 / (16666.667 + (g.fe_valid ? g.fe_F : g.gl_integ)),
+           g.fe_sd / 1000, g.fe_rejected ? ", con misure scartate" : "");
   if (g.gl_state) {
     /* fuori dallo stream il raster torna a 60,000 Hz esatti */
     pthread_mutex_lock(&ring_mx);
@@ -893,11 +901,24 @@ static void guard_wait(bool idr, uint64_t *held_us, PDECODE_UNIT du) {
           double resid = 0, b = (sy - slope * sx) / n;
           for (unsigned i = 0; i < g.fe_n; i++) { double r = g.fe_y[i] - (b + slope * g.fe_x[i]); resid += r * r; }
           g.fe_sd = sqrt(resid / n);
-          if (!g.fe_valid)
-            printf("[genlock] frequenza del PC misurata su %.0f s: %+.2f us a quadro (%.4f Hz; la stima d'avvio era %+.1f)\n",
-                   xmax - xmin, F, 1e6 / (P + F), g.gl_integ);
-          g.fe_F = F;
-          g.fe_valid = true;
+          /* una misura buona: la fase sta sulla retta (sulle tracce del 15/11, scarto 0,5-0,7 ms a
+           * regime, sotto 1 ms da 10 s dall'avvio) e la frequenza è nel campo del PLL (+-127 unità,
+           * 32 us a quadro). Se no la si scarta e resta quella di prima: due sessioni del 15/11 sera
+           * (senza traccia) avevano misurato -373 e -32 us a quadro, col PC a +13 */
+          if (fabs(F) > G_FE_MAX_US || g.fe_sd > G_FE_MAX_SD_US) {
+            if (!g.fe_rejected++)
+              printf("[genlock] misura della frequenza scartata: %+.1f us a quadro, la fase a %.1f ms dalla retta\n",
+                     F, g.fe_sd / 1000);
+          } else {
+            if (!g.fe_valid)
+              printf("[genlock] frequenza del PC misurata su %.0f s: %+.2f us a quadro (%.4f Hz; la stima d'avvio era %+.1f)\n",
+                     xmax - xmin, F, 1e6 / (P + F), g.gl_integ);
+            else if (fabs(F - g.fe_logged) > 3)
+              printf("[genlock] frequenza del PC ora %+.2f us a quadro (%.4f Hz)\n", F, 1e6 / (P + F));
+            if (!g.fe_valid || fabs(F - g.fe_logged) > 3) g.fe_logged = F;
+            g.fe_F = F;
+            g.fe_valid = true;
+          }
         }
       }
     }
