@@ -47,8 +47,7 @@ static void rec(int kind, int a, int b, int c, int d, int e, int f, int g, int h
   pthread_mutex_unlock(&call_mx);
 }
 static volatile int idr_calls;
-static volatile int pending_frames;                 /* LiGetPendingVideoFrames */
-int LiGetPendingVideoFrames(void) { return pending_frames; }
+int LiGetPendingVideoFrames(void) { return 0; }
 void LiRequestIdrFrame(void) { __sync_fetch_and_add(&idr_calls, 1); }
 int LiSendMultiControllerEvent(short n, short mask, int buttons, unsigned char lt, unsigned char rt,
                                short lx, short ly, short rx, short ry) {
@@ -234,32 +233,6 @@ static void on_refused(const char *why) { refusals++; }
 
 static uint32_t rumble_word(int padn) { return (lo(H264RING_W_RUMBLE + padn / 2) >> (16 * (padn % 2))) & 0xFFFF; }
 
-static void *take_later(void *arg) {
-  usleep((useconds_t)(intptr_t)arg * 1000);
-  core.pick++;
-  return NULL;
-}
-
-static uint8_t *g_buf;
-static struct h264ring_au *g_au;
-static bool *g_idr;
-static double timed_submit(size_t i) {
-  LENTRY e;
-  DECODE_UNIT du;
-  memset(&e, 0, sizeof e);
-  e.data = (char *)g_buf + g_au[i].off;
-  e.length = (int)g_au[i].len;
-  memset(&du, 0, sizeof du);
-  du.frameType = g_idr[i] ? FRAME_TYPE_IDR : FRAME_TYPE_PFRAME;
-  du.fullLength = (int)g_au[i].len;
-  du.bufferList = &e;
-  struct timespec a0, a1;
-  clock_gettime(CLOCK_MONOTONIC, &a0);
-  mg_video_callbacks.submitDecodeUnit(&du);
-  clock_gettime(CLOCK_MONOTONIC, &a1);
-  return (a1.tv_sec - a0.tv_sec) * 1e3 + (a1.tv_nsec - a0.tv_nsec) / 1e6;
-}
-
 int main(int argc, char **argv) {
   if (argc != 2) {
     fprintf(stderr, "usage: test_core STREAM.h264\n");
@@ -283,7 +256,6 @@ int main(int argc, char **argv) {
       if (p[k] == 0 && p[k + 1] == 0 && p[k + 2] == 1 && (p[k + 3] & 0x1F) == 5) { is_idr[i] = true; break; }
   }
   printf("test_core: %zu access units, the first %s IDR\n", nau, is_idr[0] ? "e'" : "not");
-  g_buf = buf; g_au = au; g_idr = is_idr;
 
   ringmem = calloc(RING / 8, 8);
   pthread_t ct;
@@ -528,7 +500,6 @@ int main(int argc, char **argv) {
   mg_core_get_counters(&cn);
   CHECK("audio before the first IDR: not written", cn.aud_early == 1 && cn.aud == 0);
 
-  mg_core_set_pacing(false);
   size_t first_p = 0;
   while (first_p < nau && is_idr[first_p]) first_p++;
   LENTRY e;
@@ -569,40 +540,14 @@ int main(int argc, char **argv) {
   mg_core_get_counters(&cn);
   CHECK("counters: AUs and audio", cn.au == nau && cn.aud > 0 && cn.aud_plc > 0);
 
-  /* pacing: the next picture only after the previous one was taken */
-  printf("Pacing\n");
-  mg_core_set_pacing(true);
+  /* a new stream (two more sessions), from an IDR */
   mg_core_stream_end();
-  mg_core_stream_begin();          /* pacing counters from scratch (two more sessions) */
+  mg_core_stream_begin();
   usleep(2000);
   {
     size_t idr0 = 0;
     while (idr0 < nau && !is_idr[idr0]) idr0++;
-    struct timespec a0, a1;
-    clock_gettime(CLOCK_MONOTONIC, &a0);
-    int r1 = SUBMIT(idr0);
-    clock_gettime(CLOCK_MONOTONIC, &a1);
-    double ms1 = (a1.tv_sec - a0.tv_sec) * 1e3 + (a1.tv_nsec - a0.tv_nsec) / 1e6;
-    CHECK("the first picture passes at once", r1 == DR_OK && ms1 < 20);
-    /* the core takes it after ~25 ms: the second waits for the pickup */
-    pthread_t pk;
-    pthread_create(&pk, NULL, take_later, (void *)(intptr_t)25);
-    double ms2 = timed_submit(idr0 + 1);
-    pthread_join(pk, NULL);
-    CHECK("the second waits for the core to take the first (~25 ms)", ms2 > 18 && ms2 < 45);
-    core.pick++; usleep(2000);
-    double ms3 = timed_submit(idr0 + 2);
-    CHECK("the previous one already taken: no wait", ms3 < 10);
-    pending_frames = 1;
-    double ms4 = timed_submit(idr0 + 3);
-    pending_frames = 0;
-    CHECK("with a newer picture behind: no wait", ms4 < 10);
-    core.skip++; usleep(2000);    /* the third dropped by the core */
-    double ms5 = timed_submit(idr0 + 4);
-    CHECK("a picture never taken: a wait of at most ~50 ms", ms5 > 40 && ms5 < 80);
-    core.pick += 2; usleep(2000); /* the last two taken */
-    double ms6 = timed_submit(idr0 + 5);
-    CHECK("after a lost one the count realigns", ms6 < 10);
+    for (size_t i = idr0; i < idr0 + 3 && i < nau; i++) SUBMIT(i);
   }
 
   /* decode error */

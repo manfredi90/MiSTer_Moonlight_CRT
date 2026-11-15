@@ -83,43 +83,28 @@ static mg_core_counters n;
  * another already waits behind it, the oldest is dropped (line 490). If the pictures arrive near
  * that moment, a delay of a few ms (Wi-Fi, decoding) makes them land now before now after: a
  * repeated frame and then a dropped picture, in bursts, every time the PC's rhythm (59.95 for
- * example) brings the arrivals onto that point.
- *
- * NOTE (0.1.5): the core closes a picture only when the start of the next one arrives (the close
- * at the record's end, "P3e", is not there yet): as long as that holds pacing cannot work (it
- * would wait for the pickup of a picture that completes only by writing the next) and it is off
- * by default.
- *
- * Pacing: a picture is written to the core only when the previous one was already taken (or
- * dropped). After a late arrival (a repeated frame) the following pictures are written right
- * after each pickup, with a whole frame to decode them: no more bursts, only the repeat that the
- * rhythm difference with the PC makes unavoidable. A picture is written anyway if a newer one
- * already waits behind it (no delay builds up) or after PACE_MAX_MS (a lost picture).
+ * example) brings the arrivals onto that point. The genlock keeps them away from it.
  *
  * With -stats: each skipped / repeated picture at once, and a summary every 10 s. */
-#define RITMO_PERIOD_S 10
-#define PACE_MAX_MS    50
-static bool pacing = false;
+#define RHYTHM_PERIOD_S 10
 static struct {
   bool on;
   uint32_t pick_last, skip_last, starve_last;
   uint64_t t0_ms, t_last_ms;
   /* current window */
-  unsigned frames, held, held_us_max, forced, lost;
+  unsigned frames, held, held_us_max;
   uint64_t held_us_sum;
   uint32_t rtp_first, rtp_last;
   int64_t jit_min, jit_max;    /* arrival - the PC's time (rtp), us */
   unsigned skips, starves, picks;
 } rt;
-static uint32_t pace_written, pace_base;   /* written since the stream's start; taken + dropped at the start */
 
 void mg_core_set_rhythm(bool on) { rt.on = on; }
-void mg_core_set_pacing(bool on) { pacing = on; }
 static bool guard_on, genlock_req;
 
 /* THE TRACE (with -stats): one line per picture and one per core frame, in memory; written to
  * trace.csv next to the program at the stream's end (writing to the SD during the stream can
- * block). It lets a real session be replayed away from the MiSTer (client/tools/genlock_replay.py). */
+ * block). For the analysis away from the MiSTer: client/tools/genlock_trace_*.py. */
 static char *tr_buf;
 static size_t tr_len, tr_cap;
 static bool tr_on;
@@ -300,7 +285,7 @@ static void poll_status_locked(void) {
 }
 
 static void rhythm_reset_window(void) {
-  rt.frames = rt.held = rt.held_us_max = rt.forced = rt.lost = 0;
+  rt.frames = rt.held = rt.held_us_max = 0;
   rt.held_us_sum = 0;
   rt.jit_min = INT64_MAX;
   rt.jit_max = INT64_MIN;
@@ -340,7 +325,7 @@ void mg_core_tick(void) {
 }
 
 static void guard_report(void);
-static void rhythm_au(PDECODE_UNIT du, uint64_t held_us, bool forced) {
+static void rhythm_au(PDECODE_UNIT du, uint64_t held_us) {
   if (!rt.on || !rt.t0_ms)
     return;
   int64_t jit = (int64_t)du->receiveTimeUs - (int64_t)((uint64_t)du->rtpTimestamp * 1000000ull / 90000ull);
@@ -355,60 +340,20 @@ static void rhythm_au(PDECODE_UNIT du, uint64_t held_us, bool forced) {
     rt.held_us_sum += held_us;
     if (held_us > rt.held_us_max) rt.held_us_max = (unsigned)held_us;
   }
-  if (forced) rt.forced++;
-  if (now_ms() - rt.t_last_ms >= RITMO_PERIOD_S * 1000u && rt.frames > 10) {
+  if (now_ms() - rt.t_last_ms >= RHYTHM_PERIOD_S * 1000u && rt.frames > 10) {
     double t = (now_ms() - rt.t0_ms) / 1000.0;
     rt.t_last_ms = now_ms();
     double drtp = (double)(uint32_t)(rt.rtp_last - rt.rtp_first);
     double fps = drtp > 0 ? (rt.frames - 1) * 90000.0 / drtp : 0;
-    printf("[rhythm] %7.1f s: %u pictures, the PC at %.3f fps, arrival +-%.1f ms; pacing %s: %u held "
-           "(mean %.1f ms, max %.1f), %u written with a newer one behind, %u lost; "
-           "core: %u picks, %u dropped, %u repeated\n",
-           t, rt.frames, fps, (rt.jit_max - rt.jit_min) / 2000.0, guard_on ? "guard" : pacing ? "on" : "off", rt.held,
-           rt.held ? rt.held_us_sum / 1000.0 / rt.held : 0.0, rt.held_us_max / 1000.0, rt.forced, rt.lost,
-           rt.picks, rt.skips, rt.starves);
+    printf("[rhythm] %7.1f s: %u pictures, the PC at %.3f fps, arrival +-%.1f ms; ", t, rt.frames, fps,
+           (rt.jit_max - rt.jit_min) / 2000.0);
+    if (guard_on)
+      printf("guard: %u held (mean %.1f ms, max %.1f); ", rt.held, rt.held ? rt.held_us_sum / 1000.0 / rt.held : 0.0,
+             rt.held_us_max / 1000.0);
+    printf("core: %u picks, %u dropped, %u repeated\n", rt.picks, rt.skips, rt.starves);
     guard_report();
     rhythm_reset_window();
   }
-}
-
-/* Waits until the core took or dropped the previous picture (pacing) */
-static void pace_wait(uint64_t *held_us, bool *forced) {
-  *held_us = 0;
-  *forced = false;
-  if (!pacing)
-    return;
-  uint64_t t0 = now_us();
-  for (;;) {
-    struct h264ring_status st;
-    pthread_mutex_lock(&ring_mx);
-    int ok = ring && session_ok && streaming && h264ring_status(ring, &st) == 0;
-    pthread_mutex_unlock(&ring_mx);
-    if (!ok)
-      return;
-    uint32_t done = (uint32_t)H264RING_ST(&st, DISP_PICK) + (uint32_t)H264RING_ST(&st, DISP_SKIP) - pace_base;
-    int32_t pending = (int32_t)(pace_written - done);
-    if (pending <= 0) {
-      if (pending < 0)
-        pace_base += (uint32_t)pending; /* more picks counted than writes (restart): realign */
-      break;
-    }
-    uint64_t dt = now_us() - t0;
-    if (LiGetPendingVideoFrames() > 0) {
-      *forced = true; /* another one arrived: no delay builds up, the core drops the old one */
-      break;
-    }
-    if (dt >= PACE_MAX_MS * 1000u) {
-      /* a picture never taken (lost by the decoder): no longer waited for */
-      pace_base -= (uint32_t)pending;
-      if (rt.on) rt.lost++;
-      break;
-    }
-    usleep(300);
-  }
-  *held_us = now_us() - t0;
-  if (*held_us < 500)
-    *held_us = 0;
 }
 
 /* ---------- the phase guard (-guard; core with P3e) ----------
@@ -442,10 +387,6 @@ static void pace_wait(uint64_t *held_us, bool *forced) {
 #define G_FE_MIN_S    10.0        /* ... used from 10 s of measurement (before, the 4 s startup estimate) */
 #define G_FE_MAX_US   40.0        /* ... good within +-40 us a frame (the PLL reaches +-32) */
 #define G_FE_MAX_SD_US 1500.0     /* ... and with the phase within 1.5 ms (rms) of the line */
-/* Holding early pictures is off: two versions (until after / until before the previous pickup)
- * made things worse on the MiSTer (traces of 14/11), and the model of the core's timings that
- * justified them does not hold with the second trace. The code stays, off. */
-#define G_GL_HOLD     0
 #define G_MARGIN_US   1000.0
 #define G_D0_US       10500.0     /* initial D: 1,200 macroblocks at ~110,000 a second */
 #define G_D_MIN_US    5000.0
@@ -1216,24 +1157,9 @@ static void guard_wait(bool idr, uint64_t *held_us, PDECODE_UNIT du) {
       else { target = e_next + 2 * P; hold_until = e_next + P + 200; }
     }
   }
-  /* the genlock: each picture has its pickup (the one after v + D + margin). Arriving much earlier
-   * it would be ready a frame early and collide with the previous one (one dropped, one repeated):
-   * it is held, but only until 0.25 us a byte minus 1 ms BEFORE the previous pickup (a low bound of
-   * its decode time), not until after that pickup: so a large picture has more than a frame to
-   * decode. On the trace of 14/11 (3 min, Wi-Fi), replayed with the decode time estimated from the
-   * trace itself (5 models): from 70-80 repeats to 1-8, no collision; holding until after the
-   * previous pickup caused almost all of them (pictures over 19 KB want more than 15.7 ms).
-   * client/tools/genlock_replay.py */
-  if (G_GL_HOLD && g.gl_state == 2 && g.fll_done && have_v) {
-    double tr = v_abs + g.D + g.q + 500;
-    double ei = e0 + ceil((tr - e0) / P) * P;
-    double rel = ei - P - (0.25 * du->fullLength - 1000);
-    if (w < rel && rel - w < P)
-      hold_until = rel;
-  }
   double tr_e = g.gl_err, tr_tg = g.gl_target, tr_q = g.q, tr_D = g.D;
   int tr_trim = g.gl_trim_sent;
-  bool tr_lk = g.gl_locked, tr_gl = g.gl_state == 2;
+  bool tr_lk = g.gl_locked;
   pthread_mutex_unlock(&g.mx);
   if (gl_send != -1000) {
     pthread_mutex_lock(&ring_mx);
@@ -1250,7 +1176,6 @@ static void guard_wait(bool idr, uint64_t *held_us, PDECODE_UNIT du) {
     }
     *held_us = (uint64_t)((double)now_us() - w);
   }
-  (void)tr_gl;
   tr_printf("F,%.0f,%llu,%u,%d,%d,%.0f,%.0f,%.0f,%.0f,%.0f,%d,%d,%llu,%.0f\n", w, (unsigned long long)du->receiveTimeUs,
               rtp, du->fullLength, idr, have_v ? phv : -1.0, tr_e, tr_tg, tr_q, tr_D, tr_trim, tr_lk,
               (unsigned long long)*held_us, v_abs);
@@ -1638,13 +1563,6 @@ void mg_core_stream_begin(void) {
   idr_asked_ms = idr_written_ms = 0;
   cavlc_refused = false;
   rt.t0_ms = 0;
-  {
-    struct h264ring_status st;
-    pace_written = 0;
-    pace_base = 0;
-    if (ring && h264ring_status(ring, &st) == 0)
-      pace_base = (uint32_t)H264RING_ST(&st, DISP_PICK) + (uint32_t)H264RING_ST(&st, DISP_SKIP);
-  }
   streaming = true;
   pthread_mutex_unlock(&ring_mx);
   guard_start();
@@ -1766,15 +1684,10 @@ static int video_submit(PDECODE_UNIT du) {
     len += (size_t)e->length;
   }
 
-  uint64_t held_us;
-  bool forced = false;
+  uint64_t held_us = 0;
   if (guard_on || genlock_req)               /* the arrivals are needed by the genlock alone too */
     guard_wait(idr, &held_us, du);
-  else
-    pace_wait(&held_us, &forced);
   int rc = write_record(false, au_buf, (uint32_t)len, idr, VIDEO_WAIT_MS);
-  if (rc == 0)
-    pace_written++;
   if (rc == -EOPNOTSUPP) {
     pthread_mutex_lock(&ring_mx);
     printf("[core] the stream cannot be given to the core (%s)\n", h264ring_rewrite_why(ring));
@@ -1808,7 +1721,7 @@ static int video_submit(PDECODE_UNIT du) {
   n.au++;
   n.au_bytes += len;
 
-  rhythm_au(du, held_us, forced);
+  rhythm_au(du, held_us);
   pthread_mutex_lock(&ring_mx);
   {
     struct h264ring_cavlc_stats cs;

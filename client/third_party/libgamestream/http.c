@@ -45,7 +45,7 @@ static size_t _write_curl(void *contents, size_t size, size_t nmemb, void *userp
 }
 
 int http_init(const char* keyDirectory, int logLevel) {
-  /* moonlight-groovy: gs_init can be called more than once (a refresh from the menu):
+  /* MiSTer Moonlight: gs_init can be called more than once (a refresh from the menu):
    * the old handle's connection must be closed, not abandoned */
   if (curl)
     curl_easy_cleanup(curl);
@@ -61,7 +61,7 @@ int http_init(const char* keyDirectory, int logLevel) {
   snprintf(keyFilePath, sizeof(keyFilePath), "%s/%s", keyDirectory, KEY_FILE_NAME);
 
   curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
-  /* moonlight-groovy: don't stay stuck for minutes if the PC is off */
+  /* MiSTer Moonlight: don't stay stuck for minutes if the PC is off */
   curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5L);
   curl_easy_setopt(curl, CURLOPT_TIMEOUT, 60L);
   curl_easy_setopt(curl, CURLOPT_SSLENGINE_DEFAULT, 1L);
@@ -80,7 +80,7 @@ int http_init(const char* keyDirectory, int logLevel) {
 int http_request(char* url, PHTTP_DATA data) {
   curl_easy_setopt(curl, CURLOPT_WRITEDATA, data);
   curl_easy_setopt(curl, CURLOPT_URL, url);
-  /* moonlight-groovy: closes the connection right after each request. Sunshine,
+  /* MiSTer Moonlight: closes the connection right after each request. Sunshine,
    * after the reply, sends the TLS close notify and waits for the client's: if the
    * connection stays open (curl keeps it aside to reuse it) Sunshine's HTTPS server
    * stops for every client until it is closed. */
@@ -100,7 +100,7 @@ int http_request(char* url, PHTTP_DATA data) {
   CURLcode res = curl_easy_perform(curl);
 
   if(res != CURLE_OK) {
-    /* moonlight-groovy: the system error too (e.g. host unreachable) */
+    /* MiSTer Moonlight: the system error too (e.g. host unreachable) */
     static char errbuf[160];
     long oserr = 0;
     curl_easy_getinfo(curl, CURLINFO_OS_ERRNO, &oserr);

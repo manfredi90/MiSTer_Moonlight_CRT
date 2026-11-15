@@ -27,8 +27,6 @@ void mg_core_poll(void);
 /* Diagnostics of the pictures' rhythm (-stats): every ~2 ms during the stream, from the
  * input thread; prints the skipped/repeated pictures and a summary every 10 s */
 void mg_core_set_rhythm(bool on);
-/* Pacing: a picture goes to the core only after the previous one was taken (default: off) */
-void mg_core_set_pacing(bool on);
 /* The phase guard (core with P3e): a picture that would land right at the pickup goes to the next one */
 void mg_core_set_guard(bool on);
 /* The genlock (this repository's core, interface mm 1.5): the core's phase follows the arrivals */

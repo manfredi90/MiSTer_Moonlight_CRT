@@ -24,7 +24,6 @@ typedef struct {
   int cpu;
   int pin;
   bool no_menu_cfg;
-  bool pacing;
   bool guard;
   bool genlock;
   int pc_w, pc_h;       /* the PC's resolution during the stream (0: unchanged) */

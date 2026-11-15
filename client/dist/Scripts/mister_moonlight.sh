@@ -25,10 +25,6 @@ if pidof mister_moonlight >/dev/null; then
   echo "MiSTer Moonlight is already running"
   exit 1
 fi
-# moonlight-groovy's pairing keys, if present: no new PIN
-if [ ! -d $D/keys ] && [ -d /media/fat/moonlight-groovy/keys ]; then
-  cp -r /media/fat/moonlight-groovy/keys $D/keys
-fi
 # Wi-Fi power saving makes the network pauses worse: it is turned off
 for W in /sys/class/net/wlan*; do
   [ -e "$W" ] || continue

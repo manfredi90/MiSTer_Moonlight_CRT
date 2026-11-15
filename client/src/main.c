@@ -35,7 +35,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#define MG_VERSION "0.4.0"
+#define MG_VERSION "0.4.1"
 
 static sem_t quit_sem;
 static volatile bool stop_play;
@@ -150,7 +150,6 @@ static void usage(void) {
   printf("  -stickdpad         pass on the digital directions the MiSTer derives from the stick\n");
   printf("  -debuginput        print the inputs forwarded to the PC\n");
   printf("  -nomenucfg         the menu does not read menu.cfg\n");
-  printf("  -pacing            a picture to the core only after the previous one was taken (experimental)\n");
   printf("  -guard             phase guard: with a P3e core, no picture right at the pickup\n");
   printf("  -genlock           genlock: the core tunes its rate and phase to the PC (this repository's core)\n");
   printf("  -genlock-lag       genlock with one picture in reserve in the core (one more frame of latency)\n");
@@ -211,7 +210,6 @@ static int parse(int argc, char **argv, options *o) {
     else if (!strcmp(a, "-debuginput")) o->debug_input = true;
     else if (!strcmp(a, "-stickdpad")) o->stick_dpad = true;
     else if (!strcmp(a, "-nomenucfg")) o->no_menu_cfg = true;
-    else if (!strcmp(a, "-pacing")) o->pacing = true;
     else if (!strcmp(a, "-guard")) o->guard = true;
     else if (!strcmp(a, "-genlock")) o->genlock = true;
     else if (!strcmp(a, "-genlock-lag")) { o->genlock = true; o->gl_lag = true; }
@@ -302,7 +300,6 @@ int mg_stream_session(PSERVER_DATA server, options *o, int app_id, char *msg, si
          ci.refresh_x100 / 100.0);
 
   mg_core_set_rhythm(o->stats);
-  mg_core_set_pacing(o->pacing);
   mg_core_set_guard(o->guard);
   mg_core_set_genlock(o->genlock);
   mg_core_set_gl_lag(o->genlock && o->gl_lag);
