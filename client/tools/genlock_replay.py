@@ -1,6 +1,6 @@
-# Rigioca una traccia (traccia.csv, -stats col genlock): gli arrivi veri contro le prese vere del core,
-# con un modello di decodifica sequenziale d = A + B x byte stimato dalle ripetute osservate.
-# Uso: python3 genlock_replay.py traccia.csv
+# Replays a trace (trace.csv, -stats with the genlock): the real arrivals against the core's real
+# pickups, with a sequential decode model d = A + B x bytes estimated from the observed repeats.
+# Usage: python3 genlock_replay.py trace.csv
 import sys
 # Replay: real arrivals (w, size, v, real target) vs the real pickup grid, moved by (new target - real
 # target) as the genlock would move the core's phase; sequential decode d = B * bytes.
@@ -38,11 +38,11 @@ def run(B, Dt, rel_fn):
     lat=sorted(ek-w for f,w,ek in fin); 
     return miss,len(fin),lat[len(lat)//2]/1000
 for B in (0.62,0.72):
-    print("decodifica %.2f us/byte: 12 KB %.1f ms, 22 KB %.1f ms"%(B,B*12000/1000,B*22000/1000))
+    print("decoding %.2f us/byte: 12 KB %.1f ms, 22 KB %.1f ms"%(B,B*12000/1000,B*22000/1000))
     for Dt in (15000,16000,17000,18000,19000,20000):
-        for name,rf in (("rilascio 1 ms dopo la presa precedente",lambda by:-1000),("rilascio prima, secondo la dimensione",lambda by:0.35*by-1000)):
+        for name,rf in (("release 1 ms after the previous pickup",lambda by:-1000),("release before, by size",lambda by:0.35*by-1000)):
             m,n,lm=run(B,Dt,rf)
-            print("   decodifica prevista %4.1f ms, %-40s: quadri persi %4d su %d (%.2f%%), latenza mediana %.1f ms"%(Dt/1000,name,m,n,100*m/n,lm))
+            print("   expected decoding %4.1f ms, %-40s: frames lost %4d of %d (%.2f%%), median latency %.1f ms"%(Dt/1000,name,m,n,100*m/n,lm))
 
 # calibration: observed repeats during the locked part
 Eall=[]
@@ -53,7 +53,7 @@ t_a=F[0][0]; t_b=F[-1][0]
 obs=0
 for (s0,r0),(s1,r1) in zip(Eall,Eall[1:]):
     if t_a<s1<t_b: obs+=(r1-r0)&0xffff
-print("\nripetute osservate nella parte agganciata: %d su %d immagini"%(obs,len(F)))
+print("\nrepeats observed in the locked part: %d of %d pictures"%(obs,len(F)))
 def run2(A,B,Dt,rel_fn):
     writes=[]
     for w,by,v,lk,q,D in F:
@@ -79,13 +79,13 @@ for A in range(-8000,6001,1000):
         m,_=run2(A,B,15000,lambda by:-1000)
         best.append((abs(m-obs),A,B,m))
 best.sort()
-print("modelli che riproducono le ripetute osservate:")
+print("models that reproduce the observed repeats:")
 for d,A,B,m in best[:6]:
     print("  d = %+5.1f ms + %.2f us/byte (12 KB %.1f, 22 KB %.1f, 26 KB %.1f ms): %d"%(A/1000,B,(A+B*12000)/1000,(A+B*22000)/1000,(A+B*26000)/1000,m))
 print()
 for d,A,B,m in best[:3]:
-    print("con d = %+.1f ms + %.2f us/byte:"%(A/1000,B))
+    print("with d = %+.1f ms + %.2f us/byte:"%(A/1000,B))
     for Dt in (15000,17000,19000):
-        for name,rf in (("rilascio 1 ms dopo la presa precedente",lambda by:-1000),("rilascio prima, 0,35 us/byte - 1 ms",lambda by:0.35*by-1000),("rilascio prima, 0,5 us/byte - 1 ms",lambda by:0.5*by-1000),("nessuna trattenuta",None)):
+        for name,rf in (("release 1 ms after the previous pickup",lambda by:-1000),("release before, 0.35 us/byte - 1 ms",lambda by:0.35*by-1000),("release before, 0.5 us/byte - 1 ms",lambda by:0.5*by-1000),("no hold",None)):
             m2,lm=run2(A,B,Dt,rf)
-            print("   decodifica prevista %4.1f ms, %-38s: persi %4d, latenza mediana %.1f ms"%(Dt/1000,name,m2,lm))
+            print("   expected decoding %4.1f ms, %-38s: lost %4d, median latency %.1f ms"%(Dt/1000,name,m2,lm))

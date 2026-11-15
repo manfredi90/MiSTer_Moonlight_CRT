@@ -1,5 +1,5 @@
-/* Font 8x8 dell'OSD del MiSTer (da Main_MiSTer/charrom.cpp, GPLv3).
- * Ogni carattere e' fatto di 8 colonne; il bit 0 di ogni byte e' la riga in alto. */
+/* The MiSTer OSD's 8x8 font (from Main_MiSTer/charrom.cpp, GPLv3).
+ * Each character is 8 columns; bit 0 of each byte is the top row. */
 #ifndef MG_FONT_H
 #define MG_FONT_H
 static const unsigned char mg_font[256][8] = {

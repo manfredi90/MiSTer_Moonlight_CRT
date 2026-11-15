@@ -1,10 +1,10 @@
-# Per ogni quadro ripetuto dopo l'aggancio: l'immagine destinata a quella presa, quanto tempo ha avuto
-# per decodificarsi e la sua dimensione. Uso: python3 genlock_trace_causes.py traccia.csv
-# (legge genlock_trace_analysis.py nella stessa cartella)
+# For each frame repeated after the lock: the picture meant for that pickup, how long it had to
+# decode and its size. Usage: python3 genlock_trace_causes.py trace.csv
+# (reads genlock_trace_analysis.py in the same folder)
 import sys
-exec(open(__import__('os').path.join(__import__('os').path.dirname(__file__),'genlock_trace_analysis.py')).read().split("print(\"quadri\"")[0])
+exec(open(__import__('os').path.join(__import__('os').path.dirname(__file__),'genlock_trace_analysis.py')).read().split("print(\"frames\"")[0])
 import bisect, collections
-print("quadri",len(evs),"ripetute",sum(e['dst'] for e in evs),"scartate",sum(e['dsk'] for e in evs))
+print("frames",len(evs),"repeated",sum(e['dst'] for e in evs),"dropped",sum(e['dsk'] for e in evs))
 c=collections.Counter(); ex=collections.defaultdict(list)
 slk=collections.Counter()
 for k,e in enumerate(evs):
@@ -15,11 +15,11 @@ for k,e in enumerate(evs):
     desc=["%.1f/%dB"%((e['ev']-f['w']-f['held'])/1000,f['by']) for f in cand]
     # destined: latest with slack >= 8 ms
     d=[f for f in cand if e['ev']-f['w']-f['held']>=8000]
-    if not d: cat='nessuna immagine scritta tra 8 ms e 2 quadri prima (arrivo in ritardo)'; sl=None
+    if not d: cat='no picture written between 8 ms and 2 frames before (late arrival)'; sl=None
     else:
         f=d[-1]; sl=(e['ev']-f['w']-f['held'])/1000
-        if sl>2*16.7: cat='la più recente era già vecchia (>33 ms): buco negli arrivi'
-        elif f['by']>=19000: cat='grande (>=19 KB) con %d-%d ms per decodificarsi'%(int(sl//2)*2,int(sl//2)*2+2)
-        else: cat='normale con %d-%d ms per decodificarsi'%(int(sl//2)*2,int(sl//2)*2+2)
+        if sl>2*16.7: cat='the latest was already old (>33 ms): a gap in the arrivals'
+        elif f['by']>=19000: cat='large (>=19 KB) with %d-%d ms to decode'%(int(sl//2)*2,int(sl//2)*2+2)
+        else: cat='normal with %d-%d ms to decode'%(int(sl//2)*2,int(sl//2)*2+2)
     c[cat]+=1; ex[cat].append("t%.1f [%s]"%(e['t']," ".join(desc)))
-for k,v in sorted(c.items(),key=lambda x:-x[1]): print("%3d  %s\n       es.: %s"%(v,k," | ".join(ex[k][:2])))
+for k,v in sorted(c.items(),key=lambda x:-x[1]): print("%3d  %s\n       e.g.: %s"%(v,k," | ".join(ex[k][:2])))

@@ -1,10 +1,10 @@
 /*
- * Menu a schermo (canvas 320x240, mostrato x2 nell'overlay del core H264): elenco dei
- * PC (aggiungi, rinomina, cambia indirizzo, rimuovi; tastiera a schermo), elenco delle
- * app di Sunshine, impostazioni, abbinamento col PIN a schermo. Si naviga col pad
- * (croce, A conferma, B indietro) o con la tastiera (frecce, Invio, Esc; nei campi di
- * testo si scrive direttamente). A fine stream (combinazione di uscita o chiusura dal
- * PC) si torna qui.
+ * On-screen menu (a 320x240 canvas, shown doubled in the H264 core's overlay): the list of
+ * PCs (add, rename, change address, remove; on-screen keyboard), the list of Sunshine's
+ * apps, settings, pairing with the PIN on screen. Navigated with the pad (d-pad, A
+ * confirms, B back) or the keyboard (arrows, Enter, Esc; text fields take typing
+ * directly). At the stream's end (the exit combination or a close from the PC) it comes
+ * back here.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -32,7 +32,7 @@
 
 #define W 320
 #define H 240
-#define X0 16          /* margini contro l'overscan del CRT */
+#define X0 16          /* margins against the CRT's overscan */
 #define Y0 12
 #define ROW_H 10
 #define LIST_Y 34
@@ -51,7 +51,7 @@
 
 static uint32_t canvas[W * H];
 
-/* ---------- disegno ---------- */
+/* ---------- drawing ---------- */
 
 static void fill(int x, int y, int w, int h, uint32_t c) {
   for (int j = y < 0 ? 0 : y; j < y + h && j < H; j++)
@@ -59,7 +59,7 @@ static void fill(int x, int y, int w, int h, uint32_t c) {
       canvas[j * W + i] = c;
 }
 
-/* Converte in ASCII le lettere accentate più comuni (il font dell'OSD è ASCII) */
+/* Turns the most common accented letters into ASCII (the OSD font is ASCII) */
 static void ascii_fold(const char *in, char *out, size_t n) {
   size_t o = 0;
   for (const unsigned char *p = (const unsigned char *)in; *p && o + 1 < n; p++) {
@@ -70,7 +70,7 @@ static void ascii_fold(const char *in, char *out, size_t n) {
       out[o++] = (c >= 0x80 && c <= 0xBF) ? map[c - 0x80] : '?';
       continue;
     }
-    while ((p[1] & 0xC0) == 0x80) p++; /* altri caratteri multibyte: salta */
+    while ((p[1] & 0xC0) == 0x80) p++; /* other multibyte characters: skipped */
     out[o++] = '?';
   }
   out[o] = 0;
@@ -101,10 +101,10 @@ static void text_center(int y, const char *s, uint32_t c, int scale) {
   text_scaled((W - text_len(s) * 8 * scale) / 2, y, s, c, scale);
 }
 
-/* Mostra il canvas nell'overlay del core */
+/* Shows the canvas in the core's overlay */
 static void present(void) { mg_core_overlay_present(canvas, W, H); }
 
-/* ---------- stato ---------- */
+/* ---------- state ---------- */
 
 typedef struct { char name[64]; int id; } app_entry;
 
@@ -112,33 +112,35 @@ enum { ST_CONNECT, ST_PAIR, ST_MAIN, ST_MESSAGE, ST_PCS, ST_PCOPT, ST_EDIT };
 enum { IT_APP, IT_HEADER, IT_BITRATE, IT_AUDIO, IT_QUITAFTER, IT_SYNC, IT_PCRES,
        IT_QUITAPP, IT_REFRESH, IT_EXIT, IT_PCS };
 
-/* la sincronizzazione col PC: il genlock (il core segue gli arrivi, nessun quadro in più), il
- * genlock +1 (lo stesso, e il core tiene un'immagine di riserva: un quadro in più), la guardia (un'immagine a ridosso della presa va alla successiva: fino a un quadro in più), nessuna */
+/* the sync with the PC: the genlock (the core follows the PC, no extra frame), genlock +1 (the
+ * same, and the core keeps one picture in reserve), the guard (a picture landing right at the
+ * pickup goes to the next one: up to one more frame), none */
 enum { SYNC_GENLOCK, SYNC_GENLOCK_LAG, SYNC_GUARD, SYNC_NONE, N_SYNC };
-static const char *sync_names[N_SYNC] = { "genlock", "genlock +1", "guardia", "nessuna" };
+static const char *sync_names[N_SYNC] = { "genlock", "genlock +1", "guard", "none" };
+static const char *sync_names_old[N_SYNC] = { "genlock", "genlock +1", "guardia", "nessuna" };   /* menu.cfg up to 0.3.7 */
 static int sync_mode;
 
-/* la risoluzione del PC durante lo stream (Sunshine la imposta, con la risoluzione "automatica"
- * nelle impostazioni del dispositivo video, e la ripristina): non tutti i giochi le hanno tutte.
- * Lo stream resta 640x480: 1280x720 arriva con le bande */
+/* the PC's resolution during the stream (Sunshine sets it, with "Use resolution provided by the
+ * client", and restores it): not every game has every one. The stream stays 640x480: 1280x720
+ * arrives letterboxed */
 static const struct { const char *name; int w, h; } pcres[] = {
-  { "no", 0, 0 }, { "640x480", 640, 480 }, { "1024x768", 1024, 768 }, { "1280x960", 1280, 960 }, { "1280x720", 1280, 720 },
+  { "off", 0, 0 }, { "640x480", 640, 480 }, { "1024x768", 1024, 768 }, { "1280x960", 1280, 960 }, { "1280x720", 1280, 720 },
 };
 #define N_PCRES ((int)(sizeof(pcres) / sizeof(pcres[0])))
 static int pcres_i;
 
-/* i PC con Sunshine (salvati in menu.cfg come pc=indirizzo|nome) */
+/* the PCs with Sunshine (saved in menu.cfg as pc=address|name) */
 #define MAX_PCS 16
 typedef struct { char host[64]; char name[32]; } pc_entry;
 static pc_entry pcs[MAX_PCS];
 static int n_pcs, cur_pc = -1;
-static bool pcs_saved;           /* menu.cfg ha già un elenco (anche vuoto): HOST non si riaggiunge */
+static bool pcs_saved;           /* menu.cfg already has a list (even empty): HOST is not added again */
 static char last_pc[64];
-static int pc_cursor;            /* nell'elenco dei PC: 0..n_pcs-1 i PC, poi Aggiungi, Esci */
-static int opt_cursor;           /* nelle opzioni di un PC */
-static bool opt_confirm;         /* "Rimuovi" premuto una volta: si chiede conferma */
+static int pc_cursor;            /* in the list of PCs: 0..n_pcs-1 the PCs, then Add, Exit */
+static int opt_cursor;           /* in a PC's options */
+static bool opt_confirm;         /* "Remove" pressed once: confirmation is asked */
 
-/* la tastiera a schermo */
+/* the on-screen keyboard */
 enum { ED_NEW_HOST, ED_NEW_NAME, ED_HOST, ED_NAME };
 static int ed_kind, ed_pc;
 static char ed_buf[64], ed_title[48], ed_new_host[64];
@@ -149,7 +151,7 @@ static char ed_err[64];
 typedef struct { int type; int app; } item;
 
 static options *opt;
-static char host_buf[64];        /* l'indirizzo del PC scelto (opt->host vi punta) */
+static char host_buf[64];        /* the chosen PC's address (opt->host points to it) */
 static const char *keydir;
 static SERVER_DATA server;
 static bool server_ok;
@@ -160,15 +162,15 @@ static item items[80];
 static int n_items, cursor, scroll;
 static char pin[5];
 static char msg_title[64], msg_text[2][320];
-static bool msg_retry;           /* nel messaggio, A riprova la connessione */
+static bool msg_retry;           /* in the message, A retries the connection */
 static char status[160];
 static uint32_t status_color;
 static double status_until;
 static char last_app[64];
 static char cfg_path[PATH_MAX];
 
-/* fino a 10000: oltre, le immagini grandi superano il quadro di decodifica del core (circa 2,7 ms
- * + 0,57 us per byte, tracce del 15/11) e la qualità a 640x480 non migliora */
+/* up to 10000: beyond that, large pictures take the core longer than a frame to decode (about
+ * 2.7 ms + 0.57 us a byte, traces of 15/11) and the quality at 640x480 does not improve */
 static const int bitrates[] = { 0, 3000, 5000, 8000, 10000 };
 #define N_BITRATES (int)(sizeof(bitrates) / sizeof(bitrates[0]))
 
@@ -192,7 +194,7 @@ static void show_message(const char *title, const char *l1, const char *l2, bool
   state = ST_MESSAGE;
 }
 
-/* ---------- impostazioni salvate ---------- */
+/* ---------- saved settings ---------- */
 
 static void cfg_load(void) {
   FILE *f = fopen(cfg_path, "r");
@@ -204,14 +206,14 @@ static void cfg_load(void) {
     *eq = 0;
     char *v = eq + 1;
     v[strcspn(v, "\r\n")] = 0;
-    /* res= e fps= (versioni fino alla 0.1.5) si ignorano: dal menu sempre 640x480 a 60 */
+    /* res= and fps= (versions up to 0.1.5) are ignored: from the menu always 640x480 at 60 */
     if (!strcmp(line, "bitrate")) { opt->bitrate = atoi(v); if (opt->bitrate > 10000) opt->bitrate = 10000; }
     else if (!strcmp(line, "audio")) opt->audio = atoi(v) != 0;
     else if (!strcmp(line, "quitafter")) opt->quit_after = atoi(v) != 0;
     else if (!strcmp(line, "lastapp")) snprintf(last_app, sizeof(last_app), "%s", v);
     else if (!strcmp(line, "lastpc")) snprintf(last_pc, sizeof(last_pc), "%s", v);
-    else if (!strcmp(line, "sync")) { for (int i = 0; i < N_SYNC; i++) if (!strcmp(v, sync_names[i])) sync_mode = i; }
-    else if (!strcmp(line, "pcres")) { for (int i = 0; i < N_PCRES; i++) if (!strcmp(v, pcres[i].name)) pcres_i = i; }
+    else if (!strcmp(line, "sync")) { for (int i = 0; i < N_SYNC; i++) if (!strcmp(v, sync_names[i]) || !strcmp(v, sync_names_old[i])) sync_mode = i; }
+    else if (!strcmp(line, "pcres")) { pcres_i = 0; for (int i = 1; i < N_PCRES; i++) if (!strcmp(v, pcres[i].name)) pcres_i = i; }
     else if (!strcmp(line, "pcs")) pcs_saved = true;
     else if (!strcmp(line, "pc") && n_pcs < MAX_PCS) {
       char *bar = strchr(v, '|');
@@ -236,17 +238,17 @@ static void cfg_save(void) {
   pcs_saved = true;
 }
 
-/* ---------- lavori in background (rete) ---------- */
+/* ---------- background jobs (network) ---------- */
 
 enum { JOB_NONE, JOB_CONNECT, JOB_PAIR };
 static pthread_t job_thread;
 static volatile int job, job_done;
 static int job_result;
 static char job_error[160];
-static bool was_paired; /* già visto abbinato in questa esecuzione (col PC scelto) */
-/* Un lavoro alla volta (libgamestream ha un solo handle curl). Cambiando PC mentre un lavoro
- * è in corso (un abbinamento può attendere il PIN fino a 60 s) il suo esito si scarta: conta
- * solo quello col numero di PC attuale; la connessione al nuovo PC parte quando finisce. */
+static bool was_paired; /* already seen paired in this run (with the chosen PC) */
+/* One job at a time (libgamestream has a single curl handle). If the PC changes while a job
+ * runs (a pairing can wait for the PIN up to 60 s) its result is dropped: only the one with
+ * the current PC's number counts; the connection to the new PC starts when it ends. */
 static int pc_gen, job_gen;
 static bool connect_pending;
 static char job_host[64];
@@ -257,44 +259,43 @@ static void *job_main(void *arg) {
   if (job == JOB_PAIR) {
     ret = gs_pair(&server, pin);
     if (ret != GS_OK)
-      snprintf(job_error, sizeof(job_error), "%s", gs_error ? gs_error : "errore sconosciuto");
+      snprintf(job_error, sizeof(job_error), "%s", gs_error ? gs_error : "unknown error");
   } else {
     double t0 = now_s();
     ret = gs_init(&server, job_host, 47989, keydir, 0, true);
-    /* All'avvio la rete del MiSTer può non essere ancora pronta (il caricamento
-     * del core e il Wi-Fi appena riconfigurato): qualche tentativo prima di
-     * mostrare l'errore. */
+    /* At start the MiSTer's network may not be ready yet (the core just loaded and
+     * the Wi-Fi just reconfigured): a few attempts before showing the error. */
     for (int i = 0; i < 4 && ret != GS_OK && !mg_exiting() && job_gen == pc_gen; i++) {
-      printf("[menu] connessione fallita dopo %.1f s (%s): riprovo (%d)\n", now_s() - t0,
+      printf("[menu] connection failed after %.1f s (%s): retrying (%d)\n", now_s() - t0,
              gs_error ? gs_error : "?", i + 1);
       if (i == 0)
-        mg_net_diag("connessione a Sunshine fallita", job_host);
+        mg_net_diag("connection to Sunshine failed", job_host);
       sleep(2);
       t0 = now_s();
       ret = gs_init(&server, job_host, 47989, keydir, 0, true);
     }
     if (ret == GS_OK && !server.paired)
-      printf("[menu] serverinfo: non abbinato secondo HTTP (app in corso %d); HTTPS fallito dopo %.1f s: %s\n",
+      printf("[menu] serverinfo: not paired according to HTTP (running app %d); HTTPS failed after %.1f s: %s\n",
              server.currentGame, now_s() - t0, gs_https_error[0] ? gs_https_error : "?");
-    /* Subito dopo uno stream Sunshine può non rispondere sulla porta HTTPS:
-     * libgamestream ripiega allora su HTTP, che dice sempre "non abbinato".
-     * Se l'abbinamento c'era, si riprova qualche volta prima di chiedere il PIN. */
+    /* Right after a stream Sunshine may not answer on the HTTPS port: libgamestream
+     * then falls back to HTTP, which always says "not paired". If the pairing was
+     * there, a few retries before asking for the PIN. */
     for (int i = 0; i < 5 && ret == GS_OK && !server.paired && was_paired && !mg_exiting() && job_gen == pc_gen; i++) {
-      printf("[menu] Sunshine risponde \"non abbinato\": riprovo (%d)\n", i + 1);
+      printf("[menu] Sunshine answers \"not paired\": retrying (%d)\n", i + 1);
       sleep(2);
       t0 = now_s();
       ret = gs_init(&server, job_host, 47989, keydir, 0, true);
       if (ret == GS_OK && !server.paired)
-        printf("[menu]   ancora no: HTTPS fallito dopo %.1f s: %s\n", now_s() - t0, gs_https_error);
+        printf("[menu]   still not: HTTPS failed after %.1f s: %s\n", now_s() - t0, gs_https_error);
     }
     if (ret == GS_OK && server.paired && job_gen == pc_gen)
       was_paired = true;
     if (ret != GS_OK) {
-      snprintf(job_error, sizeof(job_error), "%s", gs_error ? gs_error : "nessuna risposta");
+      snprintf(job_error, sizeof(job_error), "%s", gs_error ? gs_error : "no answer");
     } else if (server.paired && job_gen == pc_gen) {
       PAPP_LIST list = NULL;
       if (gs_applist(&server, &list) == GS_OK) {
-        /* libgamestream costruisce l'elenco al contrario: lo rigiriamo */
+        /* libgamestream builds the list backwards: we turn it around */
         int n = 0;
         for (PAPP_LIST l = list; l; l = l->next) n++;
         if (n > 48) n = 48;
@@ -306,7 +307,7 @@ static void *job_main(void *arg) {
         }
       } else {
         ret = GS_FAILED;
-        snprintf(job_error, sizeof(job_error), "elenco app: %s", gs_error ? gs_error : "errore");
+        snprintf(job_error, sizeof(job_error), "app list: %s", gs_error ? gs_error : "error");
       }
     }
   }
@@ -317,7 +318,7 @@ static void *job_main(void *arg) {
 
 static void start_job(int j) {
   if (job != JOB_NONE) {
-    if (j == JOB_CONNECT && job_gen != pc_gen) connect_pending = true;   /* dopo quello vecchio */
+    if (j == JOB_CONNECT && job_gen != pc_gen) connect_pending = true;   /* after the old one */
     return;
   }
   job = j;
@@ -334,26 +335,25 @@ static void finish_job(void) {
   pthread_join(job_thread, NULL);
   int j = job;
   job = JOB_NONE;
-  if (job_gen != pc_gen) {                   /* il PC è cambiato: l'esito non conta */
-    printf("[menu] esito per %s scartato (PC cambiato)\n", job_host);
+  if (job_gen != pc_gen) {                   /* the PC changed: the result does not count */
+    printf("[menu] result for %s dropped (PC changed)\n", job_host);
     if (connect_pending) { connect_pending = false; start_job(JOB_CONNECT); }
     return;
   }
   if (j == JOB_CONNECT) {
     if (job_result != GS_OK) {
       char l1[160];
-      snprintf(l1, sizeof(l1), "Sunshine non risponde su %s", host_buf);
+      snprintf(l1, sizeof(l1), "Sunshine does not answer at %s", host_buf);
       server_ok = false;
       if (state != ST_MESSAGE)
-        show_message("Connessione", l1, job_error, true);
+        show_message("Connection", l1, job_error, true);
     } else if (!server.paired && gs_https_error[0] && (was_paired || server.currentGame != 0)) {
-      /* Con un'app aperta Sunshine rifiuterebbe comunque l'abbinamento
-       * ("The computer is currently in a game"): il problema è la connessione
-       * HTTPS, non l'abbinamento. */
+      /* With an app open Sunshine would refuse the pairing anyway ("The computer is
+       * currently in a game"): the problem is the HTTPS connection, not the pairing. */
       char l2[320];
-      snprintf(l2, sizeof(l2), "Errore: %s. Se il problema resta, chiudi l'app sul PC (in Sunshine: Risoluzione dei problemi, Forza chiusura) e riprova.", gs_https_error);
+      snprintf(l2, sizeof(l2), "Error: %s. If it persists, close the app on the PC (in Sunshine: Troubleshooting, Force Close) and retry.", gs_https_error);
       server_ok = false;
-      show_message("Connessione", "Sunshine non risponde sulla connessione sicura", l2, true);
+      show_message("Connection", "Sunshine does not answer on the secure connection", l2, true);
     } else if (!server.paired) {
       srandom(getpid() ^ (unsigned)time(NULL));
       snprintf(pin, sizeof(pin), "%04ld", random() % 10000);
@@ -362,20 +362,20 @@ static void finish_job(void) {
     } else {
       server_ok = true;
       rebuild_items();
-      if (state == ST_CONNECT) state = ST_MAIN; /* un messaggio aperto resta finché non si preme A */
+      if (state == ST_CONNECT) state = ST_MAIN; /* an open message stays until A is pressed */
     }
   } else if (j == JOB_PAIR) {
     if (job_result == GS_OK) {
-      set_status("Abbinamento riuscito", C_OK);
+      set_status("Paired", C_OK);
       state = ST_CONNECT;
       start_job(JOB_CONNECT);
     } else {
-      show_message("Abbinamento fallito", job_error, "", true);
+      show_message("Pairing failed", job_error, "", true);
     }
   }
 }
 
-/* ---------- elenco ---------- */
+/* ---------- list ---------- */
 
 static void rebuild_items(void) {
   int old_type = n_items ? items[cursor].type : -1;
@@ -384,7 +384,7 @@ static void rebuild_items(void) {
   for (int i = 0; i < n_apps; i++)
     items[n_items++] = (item){ IT_APP, i };
   if (!n_apps)
-    items[n_items++] = (item){ IT_HEADER, -2 }; /* "nessuna app" */
+    items[n_items++] = (item){ IT_HEADER, -2 }; /* "no app" */
   items[n_items++] = (item){ IT_HEADER, -1 };
   items[n_items++] = (item){ IT_BITRATE, -1 };
   items[n_items++] = (item){ IT_AUDIO, -1 };
@@ -397,7 +397,7 @@ static void rebuild_items(void) {
   items[n_items++] = (item){ IT_PCS, -1 };
   items[n_items++] = (item){ IT_EXIT, -1 };
 
-  /* rimette il cursore dov'era, oppure sull'ultima app usata */
+  /* puts the cursor back where it was, or on the last app used */
   cursor = 0;
   for (int i = 0; i < n_items; i++) {
     if (old_type >= 0 && items[i].type == old_type && items[i].app == old_app) { cursor = i; break; }
@@ -430,31 +430,31 @@ static void item_label(const item *it, char *label, size_t ln, char *value, size
   switch (it->type) {
   case IT_APP:
     snprintf(label, ln, "%s", apps[it->app].name);
-    if (server.currentGame == apps[it->app].id) snprintf(value, vn, "in corso");
+    if (server.currentGame == apps[it->app].id) snprintf(value, vn, "running");
     break;
-  case IT_HEADER: snprintf(label, ln, "%s", it->app == -2 ? "(nessuna app in Sunshine)" : ""); break;
+  case IT_HEADER: snprintf(label, ln, "%s", it->app == -2 ? "(no app in Sunshine)" : ""); break;
   case IT_BITRATE:
     snprintf(label, ln, "Bitrate");
     if (opt->bitrate) snprintf(value, vn, "< %d kbps >", opt->bitrate);
     else snprintf(value, vn, "< auto >");
     break;
-  case IT_AUDIO: snprintf(label, ln, "Audio"); snprintf(value, vn, "< %s >", opt->audio ? "si" : "no"); break;
-  case IT_QUITAFTER: snprintf(label, ln, "Chiudi l'app all'uscita"); snprintf(value, vn, "< %s >", opt->quit_after ? "si" : "no"); break;
-  case IT_SYNC: snprintf(label, ln, "Sincronizzazione"); snprintf(value, vn, "< %s >", sync_names[sync_mode]); break;
-  case IT_PCRES: snprintf(label, ln, "Risoluzione del PC"); snprintf(value, vn, "< %s >", pcres[pcres_i].name); break;
-  case IT_QUITAPP: snprintf(label, ln, "Chiudi l'app aperta sul PC"); break;
-  case IT_REFRESH: snprintf(label, ln, "Aggiorna elenco"); break;
-  case IT_PCS: snprintf(label, ln, "Cambia PC"); break;
-  case IT_EXIT: snprintf(label, ln, "Esci"); break;
+  case IT_AUDIO: snprintf(label, ln, "Audio"); snprintf(value, vn, "< %s >", opt->audio ? "on" : "off"); break;
+  case IT_QUITAFTER: snprintf(label, ln, "Close the app on exit"); snprintf(value, vn, "< %s >", opt->quit_after ? "yes" : "no"); break;
+  case IT_SYNC: snprintf(label, ln, "Sync"); snprintf(value, vn, "< %s >", sync_names[sync_mode]); break;
+  case IT_PCRES: snprintf(label, ln, "PC resolution"); snprintf(value, vn, "< %s >", pcres[pcres_i].name); break;
+  case IT_QUITAPP: snprintf(label, ln, "Close the app open on the PC"); break;
+  case IT_REFRESH: snprintf(label, ln, "Refresh list"); break;
+  case IT_PCS: snprintf(label, ln, "Change PC"); break;
+  case IT_EXIT: snprintf(label, ln, "Exit"); break;
   }
 }
 
-/* ---------- schermate ---------- */
+/* ---------- screens ---------- */
 
 static void draw_frame(const char *footer) {
   fill(0, 0, W, H, C_BG);
   text(X0, Y0, "MOONLIGHT", C_HEAD);
-  const char *who = state == ST_PCS || state == ST_EDIT ? "PC con Sunshine"
+  const char *who = state == ST_PCS || state == ST_EDIT ? "PCs with Sunshine"
                   : state == ST_PCOPT && ed_pc >= 0 && ed_pc < n_pcs ? pcs[ed_pc].host
                   : cur_pc >= 0 && cur_pc < n_pcs ? pcs[cur_pc].name : host_buf;
   char wb[40];
@@ -469,7 +469,7 @@ static void draw_frame(const char *footer) {
 }
 
 static void draw_main(void) {
-  draw_frame("A avvia/ok  < > cambia  B PC");
+  draw_frame("A start/ok  < > change  B PCs");
   if (cursor < scroll) scroll = cursor;
   if (cursor >= scroll + LIST_ROWS) scroll = cursor - LIST_ROWS + 1;
   for (int r = 0; r < LIST_ROWS && scroll + r < n_items; r++) {
@@ -481,7 +481,7 @@ static void draw_main(void) {
       if (it->app == -1) {
         fill(X0, y + 4, W - 2 * X0, 1, C_LINE);
         fill(X0 + 8, y, 14 * 8, 8, C_BG);
-        text(X0 + 8, y, " Impostazioni ", C_DIM);
+        text(X0 + 8, y, " Settings ", C_DIM);
       } else {
         text(X0 + 8, y, label, C_DIM);
       }
@@ -489,7 +489,7 @@ static void draw_main(void) {
     }
     bool sel = scroll + r == cursor;
     if (sel) fill(X0 - 4, y - 1, W - 2 * X0 + 8, ROW_H, C_BAR);
-    /* nome troncato per lasciare spazio al valore */
+    /* name cut to leave room for the value */
     int maxc = COLS - 1 - (value[0] ? text_len(value) + 1 : 0);
     if (text_len(label) > maxc && maxc > 3) { label[maxc - 1] = '.'; label[maxc] = 0; }
     text(X0 + 4, y, label, sel ? 0xFFFFFF : C_TEXT);
@@ -501,14 +501,14 @@ static void draw_main(void) {
 }
 
 static void draw_connect(void) {
-  draw_frame("B indietro");
+  draw_frame("B back");
   char l[96];
   if (job != JOB_NONE && job_gen != pc_gen)
-    snprintf(l, sizeof(l), "Attendo la fine della richiesta precedente...");
+    snprintf(l, sizeof(l), "Waiting for the previous request to end...");
   else if (cur_pc >= 0 && cur_pc < n_pcs && strcmp(pcs[cur_pc].name, host_buf))
-    snprintf(l, sizeof(l), "Connessione a %s (%s)...", pcs[cur_pc].name, host_buf);
+    snprintf(l, sizeof(l), "Connecting to %s (%s)...", pcs[cur_pc].name, host_buf);
   else
-    snprintf(l, sizeof(l), "Connessione a %s...", host_buf);
+    snprintf(l, sizeof(l), "Connecting to %s...", host_buf);
   text_center(100, l, C_TEXT, 1);
   static const char spin[] = "|/-\\";
   char s[2] = { spin[(int)(now_s() * 6) % 4], 0 };
@@ -516,16 +516,16 @@ static void draw_connect(void) {
 }
 
 static void draw_pair(void) {
-  draw_frame("B indietro");
-  text_center(46, "Abbinamento con Sunshine", C_HEAD, 1);
-  text_center(70, "Sul PC apri la pagina web di Sunshine", C_TEXT, 1);
-  text_center(82, "(https://localhost:47990), scheda PIN,", C_TEXT, 1);
-  text_center(94, "e inserisci questo codice:", C_TEXT, 1);
+  draw_frame("B back");
+  text_center(46, "Pairing with Sunshine", C_HEAD, 1);
+  text_center(70, "On the PC open Sunshine's web page", C_TEXT, 1);
+  text_center(82, "(https://localhost:47990), PIN tab,", C_TEXT, 1);
+  text_center(94, "and enter this code:", C_TEXT, 1);
   text_center(116, pin, C_VALUE, 4);
-  text_center(162, "In attesa...", C_DIM, 1);
+  text_center(162, "Waiting...", C_DIM, 1);
 }
 
-/* Scrive un testo centrato andando a capo sugli spazi; ritorna la y successiva */
+/* Writes a centred text wrapping on spaces; returns the next y */
 static int text_wrapped(int y, const char *s, uint32_t c) {
   char buf[256];
   ascii_fold(s, buf, sizeof(buf));
@@ -549,7 +549,7 @@ static int text_wrapped(int y, const char *s, uint32_t c) {
 }
 
 static void draw_message(void) {
-  draw_frame(msg_retry ? "A riprova  B indietro" : "A ok");
+  draw_frame(msg_retry ? "A retry  B back" : "A ok");
   text_center(76, msg_title, C_ERR, 1);
   int y = text_wrapped(100, msg_text[0], C_TEXT);
   text_wrapped(y + 4, msg_text[1], C_DIM);
@@ -558,7 +558,7 @@ static void draw_message(void) {
 static void draw_starting(const char *name) {
   draw_frame(NULL);
   char l[96];
-  snprintf(l, sizeof(l), "Avvio di %s", name);
+  snprintf(l, sizeof(l), "Starting %s", name);
   text_center(104, l, C_TEXT, 1);
   char r[64];
   int ri = mg_res_find(opt->width, opt->height);
@@ -567,12 +567,12 @@ static void draw_starting(const char *name) {
   text_center(120, r, C_DIM, 1);
 }
 
-/* ---------- elenco dei PC ---------- */
+/* ---------- list of PCs ---------- */
 
 static void pick_pc(int i);
 
 static void draw_pcs(void) {
-  draw_frame("A connetti  > opzioni  B esci");
+  draw_frame("A connect  > options  B exit");
   int n = n_pcs + 2;
   int top = pc_cursor - LIST_ROWS + 1 > 0 ? pc_cursor - LIST_ROWS + 1 : 0;
   for (int r = 0; r < LIST_ROWS && top + r < n; r++) {
@@ -588,20 +588,20 @@ static void draw_pcs(void) {
       text(X0 + 4, y, lab, sel ? 0xFFFFFF : C_TEXT);
       text_right(W - X0 - 4, y, val, C_DIM);
     } else if (i == n_pcs) {
-      text(X0 + 4, y, "+ Aggiungi PC", sel ? 0xFFFFFF : C_OK);
+      text(X0 + 4, y, "+ Add PC", sel ? 0xFFFFFF : C_OK);
     } else {
-      text(X0 + 4, y, "Esci", sel ? 0xFFFFFF : C_TEXT);
+      text(X0 + 4, y, "Exit", sel ? 0xFFFFFF : C_TEXT);
     }
   }
   if (!n_pcs)
-    text_wrapped(LIST_Y + 4 * ROW_H, "Aggiungi il PC con Sunshine scrivendo il suo indirizzo IP (lo trovi in Sunshine o con ipconfig sul PC).", C_DIM);
+    text_wrapped(LIST_Y + 4 * ROW_H, "Add the PC with Sunshine by typing its IP address (shown in Sunshine, or by ipconfig on the PC).", C_DIM);
 }
 
-static const char *pcopt_labels[] = { "Connetti", "Rinomina", "Cambia indirizzo", "Rimuovi", "Indietro" };
+static const char *pcopt_labels[] = { "Connect", "Rename", "Change address", "Remove", "Back" };
 #define N_PCOPT 5
 
 static void draw_pcopt(void) {
-  draw_frame("A ok  B indietro");
+  draw_frame("A ok  B back");
   char t[64];
   snprintf(t, sizeof(t), "%.36s", pcs[ed_pc].name);
   text_center(LIST_Y, t, C_HEAD, 1);
@@ -609,26 +609,26 @@ static void draw_pcopt(void) {
     int y = LIST_Y + 20 + i * (ROW_H + 4);
     bool sel = i == opt_cursor;
     if (sel) fill(X0 + 60, y - 2, W - 2 * X0 - 120, ROW_H + 2, C_BAR);
-    const char *l = i == 3 && opt_confirm ? "Conferma: rimuovi" : pcopt_labels[i];
+    const char *l = i == 3 && opt_confirm ? "Confirm: remove" : pcopt_labels[i];
     text_center(y, l, i == 3 && opt_confirm ? C_ERR : sel ? 0xFFFFFF : C_TEXT, 1);
   }
 }
 
-/* la tastiera: 4 righe di 10 caratteri e una di tasti speciali */
+/* the keyboard: 4 rows of 10 characters and one of special keys */
 static const char *kb_rows[2][4] = {
   { "1234567890", "qwertyuiop", "asdfghjkl-", "zxcvbnm._:" },
   { "1234567890", "QWERTYUIOP", "ASDFGHJKL-", "ZXCVBNM._:" },
 };
-static const char *kb_special[] = { "Maiusc", "Spazio", "Canc", "OK" };
+static const char *kb_special[] = { "Shift", "Space", "Del", "OK" };
 #define KB_CW 24
 #define KB_RH 16
 #define KB_X ((W - 10 * KB_CW) / 2)
 #define KB_Y 92
 
 static void draw_edit(void) {
-  draw_frame("A scrivi  Start conferma  B annulla");
+  draw_frame("A type  Start confirm  B cancel");
   text_center(LIST_Y, ed_title, C_HEAD, 1);
-  /* il campo */
+  /* the field */
   int fw = (COLS - 2) * 8;
   fill((W - fw) / 2 - 4, LIST_Y + 18, fw + 8, 14, C_LINE);
   char shown[64];
@@ -663,7 +663,7 @@ static void start_edit(int kind, int pc, const char *initial) {
   ed_pc = pc;
   snprintf(ed_buf, sizeof(ed_buf), "%s", initial ? initial : "");
   snprintf(ed_title, sizeof(ed_title), "%s",
-           kind == ED_NEW_HOST || kind == ED_HOST ? "Indirizzo IP del PC" : "Nome del PC");
+           kind == ED_NEW_HOST || kind == ED_HOST ? "The PC's IP address" : "The PC's name");
   ed_err[0] = 0;
   ed_row = 0; ed_col = 0;
   ed_shift = false;
@@ -686,7 +686,7 @@ static int find_pc(const char *h) {
 }
 
 static void edit_done(void) {
-  /* spazi in testa e in coda via */
+  /* leading and trailing spaces off */
   char *b = ed_buf;
   while (*b == ' ') b++;
   memmove(ed_buf, b, strlen(b) + 1);
@@ -694,9 +694,9 @@ static void edit_done(void) {
   switch (ed_kind) {
   case ED_NEW_HOST:
   case ED_HOST: {
-    if (!host_ok(ed_buf)) { snprintf(ed_err, sizeof(ed_err), "Indirizzo non valido"); return; }
+    if (!host_ok(ed_buf)) { snprintf(ed_err, sizeof(ed_err), "Invalid address"); return; }
     int dup = find_pc(ed_buf);
-    if (dup >= 0 && dup != ed_pc) { snprintf(ed_err, sizeof(ed_err), "C'e' gia': %.40s", pcs[dup].name); return; }
+    if (dup >= 0 && dup != ed_pc) { snprintf(ed_err, sizeof(ed_err), "Already there: %.40s", pcs[dup].name); return; }
     if (ed_kind == ED_NEW_HOST) {
       snprintf(ed_new_host, sizeof(ed_new_host), "%s", ed_buf);
       start_edit(ED_NEW_NAME, -1, "");
@@ -705,27 +705,27 @@ static void edit_done(void) {
     bool same_name = !strcmp(pcs[ed_pc].name, pcs[ed_pc].host);
     if (same_name) snprintf(pcs[ed_pc].name, sizeof(pcs[ed_pc].name), "%s", ed_buf);
     snprintf(pcs[ed_pc].host, sizeof(pcs[ed_pc].host), "%s", ed_buf);
-    if (ed_pc == cur_pc) cur_pc = -1, server_ok = false;   /* va ricollegato */
+    if (ed_pc == cur_pc) cur_pc = -1, server_ok = false;   /* it must reconnect */
     cfg_save();
-    set_status("Indirizzo cambiato", C_OK);
+    set_status("Address changed", C_OK);
     state = ST_PCOPT;
     return;
   }
   case ED_NEW_NAME: {
-    if (n_pcs >= MAX_PCS) { state = ST_PCS; set_status("Troppi PC", C_ERR); return; }
+    if (n_pcs >= MAX_PCS) { state = ST_PCS; set_status("Too many PCs", C_ERR); return; }
     pc_entry *e = &pcs[n_pcs];
     snprintf(e->host, sizeof(e->host), "%s", ed_new_host);
     snprintf(e->name, sizeof(e->name), "%.31s", ed_buf[0] ? ed_buf : ed_new_host);
     pc_cursor = n_pcs++;
     cfg_save();
-    printf("[menu] PC aggiunto: %s (%s)\n", e->name, e->host);
+    printf("[menu] PC added: %s (%s)\n", e->name, e->host);
     pick_pc(pc_cursor);
     return;
   }
   case ED_NAME:
     snprintf(pcs[ed_pc].name, sizeof(pcs[ed_pc].name), "%.31s", ed_buf[0] ? ed_buf : pcs[ed_pc].host);
     cfg_save();
-    set_status("Nome cambiato", C_OK);
+    set_status("Name changed", C_OK);
     state = ST_PCOPT;
     return;
   }
@@ -748,8 +748,8 @@ static void edit_key(int k) {
   case MG_KEY_UP:
   case MG_KEY_DOWN: {
     int r = (ed_row + (k == MG_KEY_UP ? 4 : 1)) % 5;
-    if (ed_row == 4) ed_col = ed_col * 10 / 4 + 1;   /* dai tasti speciali alle lettere */
-    else if (r == 4) ed_col = ed_col * 4 / 10;       /* e viceversa */
+    if (ed_row == 4) ed_col = ed_col * 10 / 4 + 1;   /* from the special keys to the letters */
+    else if (r == 4) ed_col = ed_col * 4 / 10;       /* and back */
     ed_row = r;
     break;
   }
@@ -770,7 +770,7 @@ static void edit_key(int k) {
   if (ed_row < 4 && ed_col > 9) ed_col = 9;
 }
 
-/* sceglie il PC i e si collega */
+/* picks PC i and connects */
 static void pick_pc(int i) {
   if (i != cur_pc || !server_ok) {
     pc_gen++;
@@ -783,11 +783,11 @@ static void pick_pc(int i) {
     opt->host = host_buf;
     snprintf(last_pc, sizeof(last_pc), "%s", pcs[i].host);
     cfg_save();
-    printf("[menu] PC scelto: %s (%s)\n", pcs[i].name, pcs[i].host);
+    printf("[menu] PC chosen: %s (%s)\n", pcs[i].name, pcs[i].host);
     state = ST_CONNECT;
     start_job(JOB_CONNECT);
   } else {
-    state = ST_MAIN;                         /* già collegato: dritti alle app */
+    state = ST_MAIN;                         /* already connected: straight to the apps */
   }
 }
 
@@ -800,7 +800,7 @@ static int render_logged;
 static void render(void) {
   int logged = render_logged;
   if (logged < 3) render_logged++;
-  if (logged < 3) printf("[menu] disegno schermata %d\n", state);
+  if (logged < 3) printf("[menu] drawing screen %d\n", state);
   switch (state) {
   case ST_CONNECT: draw_connect(); break;
   case ST_PAIR: draw_pair(); break;
@@ -813,7 +813,7 @@ static void render(void) {
   present();
 }
 
-/* ---------- azioni ---------- */
+/* ---------- actions ---------- */
 
 static void launch(int app) {
   snprintf(last_app, sizeof(last_app), "%s", apps[app].name);
@@ -826,36 +826,36 @@ static void launch(int app) {
   opt->guard = sync_mode == SYNC_GUARD;
   opt->pc_w = pcres[pcres_i].w;
   opt->pc_h = pcres[pcres_i].h;
-  printf("[menu] avvio %s (sincronizzazione: %s, risoluzione del PC: %s)\n", apps[app].name, sync_names[sync_mode], pcres[pcres_i].name);
+  printf("[menu] starting %s (sync: %s, PC resolution: %s)\n", apps[app].name, sync_names[sync_mode], pcres[pcres_i].name);
   int r = mg_stream_session(&server, opt, apps[app].id, msg, sizeof(msg));
   if (mg_exiting()) return;
-  printf("[menu] ritorno al menu\n");
+  printf("[menu] back to the menu\n");
   render_logged = 0;
   mg_input_set_mode(MG_INPUT_MENU);
   if (r != 0) {
-    show_message("Avvio non riuscito", msg, "", false);
+    show_message("Start failed", msg, "", false);
   } else if (opt->genlock && mg_core_genlock_problem()[0]) {
-    /* il genlock chiesto non ha lavorato: lo stream era senza sincronizzazione, va detto */
+    /* the requested genlock did not work: the stream had no sync, the user must know */
     char l1[240];
-    snprintf(l1, sizeof(l1), "Il genlock non ha funzionato: %s.", mg_core_genlock_problem());
-    show_message("Genlock non attivo", l1,
-                 "Lo stream era senza sincronizzazione. Per ora scegli Sincronizzazione: guardia nelle impostazioni.", false);
+    snprintf(l1, sizeof(l1), "The genlock did not work: %s.", mg_core_genlock_problem());
+    show_message("Genlock not active", l1,
+                 "The stream had no sync. For now choose Sync: guard in the settings.", false);
   } else if (opt->gl_lag && mg_core_gl_lag_problem()[0]) {
     char l1[240];
-    snprintf(l1, sizeof(l1), "La riserva non ha funzionato: %s.", mg_core_gl_lag_problem());
-    show_message("Genlock +1 non attivo", l1, "Lo stream era col genlock semplice (senza il quadro in più).", false);
+    snprintf(l1, sizeof(l1), "The reserve did not work: %s.", mg_core_gl_lag_problem());
+    show_message("Genlock +1 not active", l1, "The stream had the plain genlock (without the extra frame).", false);
   } else {
     state = ST_MAIN;
     if (msg[0]) set_status(msg, C_DIM);
   }
-  /* aggiorna l'app in corso e l'elenco */
+  /* refreshes the running app and the list */
   start_job(JOB_CONNECT);
 }
 
 static bool handle_key(int k) {
   if (k == MG_KEY_NONE) return true;
   if (state == ST_EDIT) { edit_key(k); return true; }
-  /* fuori dai campi di testo: Backspace = indietro, Spazio = ok, le altre lettere niente */
+  /* outside text fields: Backspace = back, Space = ok, the other letters nothing */
   if (k == MG_KEY_DEL) k = MG_KEY_BACK;
   else if (k == MG_KEY_ENTER) k = MG_KEY_OK;
   else if (k == MG_KEY_CHAR + ' ') k = MG_KEY_OK;
@@ -885,7 +885,7 @@ static bool handle_key(int k) {
     } else if (k == MG_KEY_OK) {
       if (pc_cursor < n_pcs) pick_pc(pc_cursor);
       else if (pc_cursor == n_pcs) {
-        if (n_pcs >= MAX_PCS) set_status("Elenco pieno: rimuovi un PC", C_ERR);
+        if (n_pcs >= MAX_PCS) set_status("List full: remove a PC", C_ERR);
         else start_edit(ED_NEW_HOST, -1, "");
       } else return false;
     }
@@ -902,13 +902,13 @@ static bool handle_key(int k) {
       case 2: start_edit(ED_HOST, ed_pc, pcs[ed_pc].host); break;
       case 3:
         if (!opt_confirm) { opt_confirm = true; break; }
-        printf("[menu] PC rimosso: %s (%s)\n", pcs[ed_pc].name, pcs[ed_pc].host);
+        printf("[menu] PC removed: %s (%s)\n", pcs[ed_pc].name, pcs[ed_pc].host);
         if (ed_pc == cur_pc) { cur_pc = -1; server_ok = false; pc_gen++; }
         else if (cur_pc > ed_pc) cur_pc--;
         memmove(&pcs[ed_pc], &pcs[ed_pc + 1], (size_t)(n_pcs - ed_pc - 1) * sizeof(pcs[0]));
         n_pcs--;
         cfg_save();
-        set_status("PC rimosso", C_DIM);
+        set_status("PC removed", C_DIM);
         opt_confirm = false;
         state = ST_PCS;
         pc_cursor = ed_pc < n_pcs ? ed_pc : n_pcs;
@@ -930,14 +930,14 @@ static bool handle_key(int k) {
       back_to_pcs();
     } else if (k == MG_KEY_OK) {
       if (t == IT_APP) {
-        if (job != JOB_NONE) set_status("Attendi l'aggiornamento...", C_DIM);
+        if (job != JOB_NONE) set_status("Wait for the refresh...", C_DIM);
         else launch(items[cursor].app);
       }
       else if (t == IT_EXIT) return false;
       else if (t == IT_PCS) back_to_pcs();
-      else if (t == IT_REFRESH) { start_job(JOB_CONNECT); set_status("Aggiornamento...", C_DIM); }
+      else if (t == IT_REFRESH) { start_job(JOB_CONNECT); set_status("Refreshing...", C_DIM); }
       else if (t == IT_QUITAPP) {
-        set_status(gs_quit_app(&server) == GS_OK ? "App chiusa sul PC" : "Chiusura non riuscita", C_DIM);
+        set_status(gs_quit_app(&server) == GS_OK ? "App closed on the PC" : "Close failed", C_DIM);
         server.currentGame = 0;
         start_job(JOB_CONNECT);
       } else change_setting(t, 1);
@@ -952,7 +952,7 @@ int mg_menu_run(options *o, const char *kd) {
   opt = o;
   keydir = kd;
 
-  /* menu.cfg accanto all'eseguibile */
+  /* menu.cfg next to the executable */
   char exe[PATH_MAX];
   ssize_t len = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
   if (len > 0) {
@@ -963,20 +963,20 @@ int mg_menu_run(options *o, const char *kd) {
   } else {
     snprintf(cfg_path, sizeof(cfg_path), "menu.cfg");
   }
-  /* la sincronizzazione: da menu.cfg se c'è (sync=), se no dalle opzioni (-genlock, -guard) */
-  /* senza -genlock né -guard: il genlock (il core di questo repository lo ha; con un altro core il
-   * menu lo dice a fine stream) */
+  /* the sync: from menu.cfg if there (sync=), otherwise from the options (-genlock, -guard) */
+  /* without -genlock or -guard: the genlock (this repository's core has it; with another core
+   * the menu says so at the stream's end) */
   sync_mode = o->genlock ? (o->gl_lag ? SYNC_GENLOCK_LAG : SYNC_GENLOCK) : o->guard ? SYNC_GUARD : SYNC_GENLOCK;
   pcres_i = 0;
   for (int i = 1; i < N_PCRES; i++) if (pcres[i].w == o->pc_w && pcres[i].h == o->pc_h) pcres_i = i;
   if (!o->no_menu_cfg)
     cfg_load();
-  /* il core è a 640 pixel e 60 Hz: dal menu sempre 640x480 a 60 immagini al secondo */
+  /* the core is 640 pixels and 60 Hz: from the menu always 640x480 at 60 pictures a second */
   o->width = 640;
   o->height = 480;
   o->fps = 0;
 
-  /* l'elenco dei PC: HOST della configurazione entra la prima volta (poi si gestisce dal menu) */
+  /* the list of PCs: the configuration's HOST enters the first time (then the menu manages it) */
   if (o->host && o->host[0] && host_ok(o->host) && find_pc(o->host) < 0 && !pcs_saved && n_pcs < MAX_PCS) {
     snprintf(pcs[n_pcs].host, sizeof(pcs[n_pcs].host), "%s", o->host);
     snprintf(pcs[n_pcs].name, sizeof(pcs[n_pcs].name), "PC");
@@ -987,7 +987,7 @@ int mg_menu_run(options *o, const char *kd) {
   pc_cursor = 0;
   int lp = find_pc(last_pc);
   if (lp >= 0) pc_cursor = lp;
-  else if (!n_pcs) pc_cursor = 0;            /* "Aggiungi PC" */
+  else if (!n_pcs) pc_cursor = 0;            /* "Add PC" */
 
   mg_input_start(o->pads, mg_request_quit);
   mg_input_set_mode(MG_INPUT_MENU);
@@ -1001,14 +1001,14 @@ int mg_menu_run(options *o, const char *kd) {
     if (!handle_key(k)) break;
     if (job != JOB_NONE && job_done) { finish_job(); dirty = true; }
     double t = now_s();
-    /* ridisegna se serve, e comunque ogni tanto (animazione, messaggi a tempo, Groovy) */
+    /* redraws when needed, and anyway now and then (animation, timed messages) */
     if (dirty || t - last_present > (state == ST_CONNECT ? 0.15 : state == ST_EDIT ? 0.5 : 1.0)) {
       render();
       last_present = t;
       dirty = false;
     }
   }
-  /* un eventuale lavoro di rete in corso finirà da solo: non lo aspettiamo */
+  /* a network job still running will end on its own: we don't wait for it */
   mg_input_stop();
   mg_core_overlay_hide();
   return 0;

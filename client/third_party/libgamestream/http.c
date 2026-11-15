@@ -45,8 +45,8 @@ static size_t _write_curl(void *contents, size_t size, size_t nmemb, void *userp
 }
 
 int http_init(const char* keyDirectory, int logLevel) {
-  /* moonlight-groovy: gs_init può essere chiamata più volte (aggiornamento
-   * dal menu): la connessione del vecchio handle va chiusa, non abbandonata */
+  /* moonlight-groovy: gs_init can be called more than once (a refresh from the menu):
+   * the old handle's connection must be closed, not abandoned */
   if (curl)
     curl_easy_cleanup(curl);
   curl = curl_easy_init();
@@ -61,7 +61,7 @@ int http_init(const char* keyDirectory, int logLevel) {
   snprintf(keyFilePath, sizeof(keyFilePath), "%s/%s", keyDirectory, KEY_FILE_NAME);
 
   curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
-  /* moonlight-groovy: non restare bloccati minuti se il PC è spento */
+  /* moonlight-groovy: don't stay stuck for minutes if the PC is off */
   curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5L);
   curl_easy_setopt(curl, CURLOPT_TIMEOUT, 60L);
   curl_easy_setopt(curl, CURLOPT_SSLENGINE_DEFAULT, 1L);
@@ -80,11 +80,10 @@ int http_init(const char* keyDirectory, int logLevel) {
 int http_request(char* url, PHTTP_DATA data) {
   curl_easy_setopt(curl, CURLOPT_WRITEDATA, data);
   curl_easy_setopt(curl, CURLOPT_URL, url);
-  /* moonlight-groovy: chiude la connessione subito dopo ogni richiesta.
-   * Sunshine, dopo la risposta, manda la notifica di chiusura TLS e resta in
-   * attesa di quella del client: se la connessione resta aperta (curl la tiene
-   * da parte per riusarla) il server HTTPS di Sunshine si ferma per tutti i
-   * client finché non viene chiusa. */
+  /* moonlight-groovy: closes the connection right after each request. Sunshine,
+   * after the reply, sends the TLS close notify and waits for the client's: if the
+   * connection stays open (curl keeps it aside to reuse it) Sunshine's HTTPS server
+   * stops for every client until it is closed. */
   curl_easy_setopt(curl, CURLOPT_FORBID_REUSE, 1L);
 
   if (debug)
@@ -101,7 +100,7 @@ int http_request(char* url, PHTTP_DATA data) {
   CURLcode res = curl_easy_perform(curl);
 
   if(res != CURLE_OK) {
-    /* moonlight-groovy: anche l'errore di sistema (es. host irraggiungibile) */
+    /* moonlight-groovy: the system error too (e.g. host unreachable) */
     static char errbuf[160];
     long oserr = 0;
     curl_easy_getinfo(curl, CURLINFO_OS_ERRNO, &oserr);

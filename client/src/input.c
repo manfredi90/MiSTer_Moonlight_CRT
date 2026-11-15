@@ -1,19 +1,19 @@
 /*
- * Input: pad, tastiera e mouse del MiSTer. Mentre gira un core il Main tiene per sé
- * tutti i dispositivi di /dev/input; il core H264 copia quello che il Main gli manda
- * (pad, tasti PS/2 set 2, somme del mouse, apertura dell'OSD) nel suo blocco di
- * controllo, e qui lo leggiamo (h264ring_input) per mandarlo a Sunshine o al menu.
+ * Input: the MiSTer's pads, keyboard and mouse. While a core runs, Main keeps every
+ * /dev/input device for itself; the H264 core copies what Main sends it (pads, PS/2
+ * set 2 keys, the mouse's sums, the OSD opening) into its control block, and here we
+ * read it (h264ring_input) to send it to Sunshine or to the menu.
  *
- * - Tasti: PS/2 set 2 (+E0) -> codice Linux (ps2_keys.h, la tabella inversa del Main)
- *   -> Virtual Key di Windows. Un rilascio senza pressione si ignora (NumLock, un tasto
- *   tenuto mentre l'OSD era aperto). Pausa arriva una volta sola: giù e su insieme.
- * - Mouse: le differenze delle somme dall'ultima lettura.
- * - OSD del MiSTer aperto: si rilascia tutto e non si inoltra niente fino alla chiusura.
- *   Le sue azioni: "Send Home to the program" = tasto Guide, "Program menu" = torna
- *   al nostro menu.
- * - Vibrazione: il callback di Sunshine salva il valore, questo thread lo scrive al
- *   core (h264ring_rumble) e lo tiene vivo oltre i 32 s del Main.
- * - Modalità mouse col pad: Start tenuto da solo 1 s la attiva/disattiva.
+ * - Keys: PS/2 set 2 (+E0) -> Linux code (ps2_keys.h, Main's table reversed)
+ *   -> Windows Virtual Key. A release without a press is ignored (NumLock, a key held
+ *   while the OSD was open). Pause arrives only once: down and up together.
+ * - Mouse: the differences of the sums since the last read.
+ * - MiSTer's OSD open: everything is released and nothing is forwarded until it closes.
+ *   Its actions: "Send Home to the program" = the Guide button, "Program menu" = back
+ *   to our menu.
+ * - Rumble: Sunshine's callback stores the value, this thread writes it to the core
+ *   (h264ring_rumble) and keeps it alive beyond Main's 32 s.
+ * - Pad mouse mode: Start held alone for 1 s toggles it.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -61,7 +61,7 @@ static double now_s(void) {
   return ts.tv_sec + ts.tv_nsec / 1e9;
 }
 
-/* codice tasto Linux -> Virtual Key di Windows */
+/* Linux key code -> Windows Virtual Key */
 static const uint8_t lin2vk[128] = {
   [1] = 0x1B, [2] = '1', [3] = '2', [4] = '3', [5] = '4', [6] = '5', [7] = '6', [8] = '7', [9] = '8',
   [10] = '9', [11] = '0', [12] = 0xBD, [13] = 0xBB, [14] = 0x08, [15] = 0x09,
@@ -105,22 +105,22 @@ static bool osd;
 static bool held[2][256];
 static char modifiers;
 static bool quit_armed;
-static uint8_t mbtn;            /* tasti del mouse premuti sull'host */
-static uint64_t pad_raw[NPADS];  /* ultima lettura dei pad */
+static uint8_t mbtn;            /* mouse buttons pressed on the host */
+static uint64_t pad_raw[NPADS];  /* the pads' last read */
 static int pad_sent_flags[MAX_HOST_PADS];
 static short pad_sent_axes[MAX_HOST_PADS][4];
 static unsigned char pad_sent_trig[MAX_HOST_PADS][2];
 static bool pads_announced;
-static double guide_until; /* tasto Guide tenuto fino a (dall'OSD) */
+static double guide_until; /* Guide button held until (from the OSD) */
 static unsigned actions;
 
 /* vibrazione */
-static uint16_t rum_want[NPADS];  /* {forte, debole}, scritto dal callback */
+static uint16_t rum_want[NPADS];  /* {strong, weak}, written by the callback */
 static uint16_t rum_sent[NPADS];
 static unsigned rum_ms;
 static double pulse_until;
 
-/* modalità mouse */
+/* mouse mode */
 static bool mouse_mode;
 static double start_since;
 static bool start_used;
@@ -205,7 +205,7 @@ static void feedback_pulse(void) { pulse_until = now_s() + 0.15; }
 static void send_key(unsigned ext, unsigned code, bool down) {
   unsigned vk = vk_of(ext, code);
   if (debug)
-    printf("[input] tasto PS/2 %s%02X -> VK 0x%02X %s\n", ext ? "E0 " : "", code, vk, down ? "giu'" : "su");
+    printf("[input] PS/2 key %s%02X -> VK 0x%02X %s\n", ext ? "E0 " : "", code, vk, down ? "down" : "up");
   LiSendKeyboardEvent2((short)(0x8000 | vk), down ? KEY_ACTION_DOWN : KEY_ACTION_UP,
                        modifiers | (ext ? MODIFIER_EXTENDED : 0), 0);
 }
@@ -261,7 +261,7 @@ static void announce_pads(void) {
                                  A_FLAG | B_FLAG | X_FLAG | Y_FLAG | UP_FLAG | DOWN_FLAG | LEFT_FLAG | RIGHT_FLAG |
                                  LB_FLAG | RB_FLAG | PLAY_FLAG | BACK_FLAG | LS_CLK_FLAG | RS_CLK_FLAG | SPECIAL_FLAG,
                                  LI_CCAP_RUMBLE);
-    pad_sent_flags[p] = -1; /* il prossimo stato si manda comunque */
+    pad_sent_flags[p] = -1; /* the next state is sent anyway */
   }
   pads_announced = true;
 }
@@ -272,7 +272,7 @@ static void key_stream(unsigned ext, unsigned code, bool pressed) {
   unsigned lk = lin_key(ext, code);
   if (!vk_of(ext, code))
     return;
-  if (lk == 119) { /* Pausa: il Main la manda una volta, al rilascio */
+  if (lk == 119) { /* Pause: Main sends it once, on release */
     send_key(ext, code, true);
     send_key(ext, code, false);
     return;
@@ -282,11 +282,11 @@ static void key_stream(unsigned ext, unsigned code, bool pressed) {
   held[ext][code] = pressed;
   char mod = modifier_of(lk);
   if (pressed) modifiers |= mod; else modifiers &= ~mod;
-  /* Ctrl+Alt+Shift+Q: chiude lo stream quando i modificatori tornano su */
+  /* Ctrl+Alt+Shift+Q: closes the stream when the modifiers come back up */
   if (pressed && lk == 16 && (modifiers & (MODIFIER_CTRL | MODIFIER_ALT | MODIFIER_SHIFT)) ==
                                  (MODIFIER_CTRL | MODIFIER_ALT | MODIFIER_SHIFT)) {
     quit_armed = true;
-    held[ext][code] = false; /* Q non arriva al PC, né giù né su */
+    held[ext][code] = false; /* Q does not reach the PC, neither down nor up */
     return;
   }
   send_key(ext, code, pressed);
@@ -298,8 +298,8 @@ static void key_stream(unsigned ext, unsigned code, bool pressed) {
   }
 }
 
-/* Il carattere di un tasto (codice Linux) per i campi di testo del menu, tastiera US / italiana
- * (lettere, cifre, punto, trattino, spazio; anche il tastierino); 0 se non serve */
+/* The character of a key (Linux code) for the menu's text fields, US / Italian keyboard
+ * (letters, digits, dot, dash, space; the keypad too); 0 if not needed */
 static int key_char(unsigned lk, bool shift) {
   static const char row1[] = "1234567890";        /* KEY_1 (2) .. KEY_0 (11) */
   static const char row2[] = "qwertyuiop";        /* KEY_Q (16) .. KEY_P (25) */
@@ -310,7 +310,7 @@ static int key_char(unsigned lk, bool shift) {
   else if (lk >= 16 && lk <= 25) c = row2[lk - 16];
   else if (lk >= 30 && lk <= 38) c = row3[lk - 30];
   else if (lk >= 44 && lk <= 50) c = row4[lk - 44];
-  else if (lk == 52 || lk == 83 || lk == 51) c = '.';     /* punto, punto del tastierino, virgola */
+  else if (lk == 52 || lk == 83 || lk == 51) c = '.';     /* dot, keypad dot, comma */
   else if (lk == 12 || lk == 74 || lk == 53) c = shift ? '_' : '-';
   else if (lk == 57) c = ' ';
   else if (lk >= 71 && lk <= 73) c = "789"[lk - 71];
@@ -349,7 +349,7 @@ static void key_menu(unsigned ext, unsigned code, bool pressed) {
     push_key(MG_KEY_CHAR + c);
 }
 
-/* ---------- modalità mouse ---------- */
+/* ---------- mouse mode ---------- */
 
 static double stick_curve(int v) {
   double x = v / 127.0;
@@ -367,10 +367,10 @@ static void set_mouse_mode(bool on) {
   mouse_buttons_to(&mm_btn, 0);
   acc_x = acc_y = acc_sx = acc_sy = 0;
   feedback_pulse();
-  printf("[input] modalita' mouse %s\n", on ? "attiva" : "disattivata");
+  printf("[input] mouse mode %s\n", on ? "on" : "off");
 }
 
-/* Start tenuto da solo 1 s commuta la modalità; ritorna true se il pad 1 fa da mouse */
+/* Start held alone for 1 s toggles the mode; returns true if pad 1 acts as a mouse */
 static bool mouse_pad1(uint64_t w, unsigned ms) {
   unsigned b = (unsigned)w & 0xFFFFu;
   double t = now_s();
@@ -387,7 +387,7 @@ static bool mouse_pad1(uint64_t w, unsigned ms) {
   }
   if (!mouse_mode)
     return false;
-  if (b & H264RING_PAD_BACK) /* le combinazioni con Select passano al pad normale */
+  if (b & H264RING_PAD_BACK) /* the combinations with Select go to the normal pad */
     return false;
   int8_t lx = (int8_t)(w >> 32), ly = (int8_t)(w >> 40), rx = (int8_t)(w >> 48), ry = (int8_t)(w >> 56);
   double dt = ms / 1000.0;
@@ -395,7 +395,7 @@ static bool mouse_pad1(uint64_t w, unsigned ms) {
   double vx = stick_curve(lx), vy = stick_curve(ly);
   unsigned d = b;
   if (lx < -24 || lx > 24 || ly < -24 || ly > 24)
-    d = 0; /* le direzioni che il MiSTer ricava dalla levetta */
+    d = 0; /* the directions the MiSTer derives from the stick */
   if (d & P_LEFT) vx = -0.5;
   if (d & P_RIGHT) vx = 0.5;
   if (d & P_UP) vy = -0.5;
@@ -462,14 +462,14 @@ static void pads_stream(unsigned ms) {
     if (j & H264RING_PAD_LS) b |= LS_CLK_FLAG;
     if (j & H264RING_PAD_RS) b |= RS_CLK_FLAG;
     unsigned char lt = (j & H264RING_PAD_LT) ? 0xFF : 0, rt = (j & H264RING_PAD_RT) ? 0xFF : 0;
-    /* Select + Start + LB + RB = chiudi lo stream */
+    /* Select + Start + LB + RB = close the stream */
     if ((b & (BACK_FLAG | PLAY_FLAG | LB_FLAG | RB_FLAG)) == (BACK_FLAG | PLAY_FLAG | LB_FLAG | RB_FLAG)) {
       printf("[input] Select+Start+LB+RB: fine dello stream\n");
       release_all();
       if (quit_cb) quit_cb();
       return;
     }
-    /* Select + Start = tasto Guide */
+    /* Select + Start = Guide button */
     if ((b & (BACK_FLAG | PLAY_FLAG)) == (BACK_FLAG | PLAY_FLAG) && !(b & (LB_FLAG | RB_FLAG))) {
       b &= ~(BACK_FLAG | PLAY_FLAG);
       b |= SPECIAL_FLAG;
@@ -528,7 +528,7 @@ void mg_input_poll_once(unsigned ms) {
       pad_raw[p] = in.w[H264RING_PAD0_JOY_W - H264RING_IN_WORD + p] & 0xFFFFFFFF0000FFFFull;
     menu_prev_pads = 0;
     for (int p = 0; p < NPADS; p++)
-      menu_prev_pads |= (unsigned)pad_raw[p] & 0xFFFFu; /* tasti già premuti all'avvio: non contano */
+      menu_prev_pads |= (unsigned)pad_raw[p] & 0xFFFFu; /* keys already pressed at start: they don't count */
   }
   if (guide_until > 0 && now_s() >= guide_until)
     guide_until = 0;
@@ -552,10 +552,10 @@ void mg_input_poll_once(unsigned ms) {
           if (m == MG_INPUT_STREAM)
             release_all();
           osd = true;
-          printf("[input] OSD del MiSTer aperto: input in pausa\n");
+          printf("[input] MiSTer OSD open: input paused\n");
         } else if (!open && osd) {
           osd = false;
-          printf("[input] OSD del MiSTer chiuso\n");
+          printf("[input] MiSTer OSD closed\n");
         }
       } else if (t == H264RING_EV_ACTION) {
         actions |= 1u << (H264RING_EV_CODE(ev[i]) & 31);
@@ -574,7 +574,7 @@ void mg_input_poll_once(unsigned ms) {
       }
     }
   }
-  /* mouse: differenze delle somme (Y del PS/2 verso l'alto, dell'host verso il basso) */
+  /* mouse: differences of the sums (PS/2 Y upwards, the host's downwards) */
   {
     int32_t dx = (int32_t)((uint32_t)H264RING_IN(&in, DX_SUM) - dx0);
     int32_t dy = -(int32_t)((uint32_t)H264RING_IN(&in, DY_SUM) - dy0);
@@ -600,10 +600,10 @@ void mg_input_poll_once(unsigned ms) {
   for (int p = 0; p < NPADS; p++)
     pad_raw[p] = in.w[H264RING_PAD0_JOY_W - H264RING_IN_WORD + p] & 0xFFFFFFFF0000FFFFull;
 
-  /* azioni dell'OSD, dopo la chiusura */
+  /* the OSD's actions, after it closes */
   if (actions && !osd) {
     if (m == MG_INPUT_STREAM && (actions & 1u)) {
-      printf("[input] OSD: Send Home -> tasto Guide\n");
+      printf("[input] OSD: Send Home -> Guide button\n");
       guide_until = now_s() + GUIDE_TAP_S;
     }
     if (m == MG_INPUT_STREAM && (actions & 2u)) {
@@ -622,7 +622,7 @@ void mg_input_poll_once(unsigned ms) {
       pads_menu();
     }
   }
-  rumble_tick(r, ms); /* dopo i pad: l'impulso della modalità mouse parte subito */
+  rumble_tick(r, ms); /* after the pads: the mouse mode's pulse starts at once */
 }
 
 static void *loop(void *arg) {
@@ -655,7 +655,7 @@ void mg_input_set_mode(int m) {
     actions = 0;
     guide_until = 0;
   } else {
-    /* i tasti tenuti all'uscita dallo stream non devono agire nel menu */
+    /* the keys held when leaving the stream must not act in the menu */
     menu_prev_pads = 0;
     for (int p = 0; p < NPADS; p++)
       menu_prev_pads |= (unsigned)pad_raw[p] & 0xFFFFu;

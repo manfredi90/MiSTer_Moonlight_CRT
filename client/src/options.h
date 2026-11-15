@@ -11,8 +11,8 @@ typedef struct {
   const char *app;
   const char *keydir;
   int width, height; /* risoluzione chiesta a Sunshine */
-  int bitrate;       /* kbps, 0 = automatico */
-  int fps;           /* 0 = come i quadri del core, 30 = metà */
+  int bitrate;       /* kbps, 0 = automatic */
+  int fps;           /* 0 = the core's frame rate, 30 = half */
   int pads;
   int remote;
   int packet_size;
@@ -27,26 +27,26 @@ typedef struct {
   bool pacing;
   bool guard;
   bool genlock;
-  int pc_w, pc_h;       /* la risoluzione del PC durante lo stream (0: invariata) */
-  bool gl_lag;          /* col genlock: un'immagine di riserva nel core (un quadro di latenza) */
+  int pc_w, pc_h;       /* the PC's resolution during the stream (0: unchanged) */
+  bool gl_lag;          /* with the genlock: one picture in reserve in the core (one frame of latency) */
   const char *core_rbf;
 } options;
 
-/* Sessione di streaming col core già collegato. Ritorna 0 se lo stream è
- * partito (e poi è finito), -1 se non è partito; 'msg' riceve il motivo. */
+/* A streaming session with the core already attached. Returns 0 if the stream
+ * started (and then ended), -1 if it did not start; 'msg' receives the reason. */
 int mg_stream_session(PSERVER_DATA server, options *o, int app_id, char *msg, size_t msglen);
-/* Chiede la fine della sessione in corso (come la combinazione di tasti) */
+/* Asks the running session to end (like the key combination) */
 void mg_request_quit(void);
-/* true se il programma deve uscire (SIGTERM/SIGINT, core scaricato) */
+/* true if the program must exit (SIGTERM/SIGINT, core unloaded) */
 bool mg_exiting(void);
 
 /* menu.c */
 int mg_menu_run(options *o, const char *keydir);
 
-/* risoluzioni proposte nel menu */
+/* the resolutions offered in the menu */
 typedef struct { int w, h; const char *desc; } mg_res;
 int mg_res_count(void);
 const mg_res *mg_res_at(int i);
-int mg_res_find(int w, int h); /* indice, -1 se non c'è */
+int mg_res_find(int w, int h); /* index, -1 if absent */
 
 #endif

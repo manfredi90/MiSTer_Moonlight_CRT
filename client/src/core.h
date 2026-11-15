@@ -7,58 +7,58 @@
 
 struct h264ring;
 
-/* Carica il core H264 (se non è già quello attivo), si collega al suo ring e
- * apre una sessione che resta aperta per tutta l'esecuzione: serve anche al
- * menu, perché il core mostra l'overlay solo durante una sessione. */
+/* Loads the H264 core (unless it is already running), attaches to its ring and
+ * opens a session that stays open for the whole run: the menu needs it too, since
+ * the core shows the overlay only during a session. */
 int  mg_core_open(void (*on_gone)(void), void (*on_refused)(const char *why));
-/* Il file del core da caricare, senza data ed estensione (predefinito: MiSTer_moonlight/core/H264,
- * se c'è, se no _Other/H264) */
+/* The core file to load, without date and extension (default: MiSTer_moonlight/core/H264
+ * if present, otherwise _Other/H264) */
 void mg_core_set_rbf(const char *rbf);
-/* Per i test: si collega a un ring già pronto (core finto in memoria) */
+/* For the tests: attaches to a ring that is already set up (a fake core in memory) */
 int  mg_core_attach(struct h264ring *r, void (*on_gone)(void), void (*on_refused)(const char *why));
 void mg_core_close(void);
-/* Per i test: un framebuffer in memoria al posto di /dev/fb0 */
+/* For the tests: a framebuffer in memory instead of /dev/fb0 */
 void mg_core_use_fb(void *virt, uint32_t phys, uint32_t len);
 struct h264ring *mg_core_ring(void);
 
-/* Rilegge lo stato del core: battito (core scaricato?), OSD aperto, errori di
- * decodifica (chiede un IDR), sessione persa (la riapre). Ogni ~50 ms. */
+/* Re-reads the core's state: heartbeat (core unloaded?), OSD open, decode errors
+ * (asks for an IDR), session lost (reopens it). Every ~50 ms. */
 void mg_core_poll(void);
-/* Diagnostica del ritmo delle immagini (-stats): ogni ~2 ms durante lo stream, dal thread
- * dell'input; stampa le immagini saltate/ripetute e ogni 10 s un riepilogo */
-void mg_core_set_ritmo(bool on);
-/* Il passo: un'immagine al core solo dopo che la precedente è stata presa (predefinito: no) */
+/* Diagnostics of the pictures' rhythm (-stats): every ~2 ms during the stream, from the
+ * input thread; prints the skipped/repeated pictures and a summary every 10 s */
+void mg_core_set_rhythm(bool on);
+/* Pacing: a picture goes to the core only after the previous one was taken (default: off) */
 void mg_core_set_pacing(bool on);
-/* La guardia di fase (core con la P3e): un'immagine che cadrebbe a ridosso della presa va alla successiva */
+/* The phase guard (core with P3e): a picture that would land right at the pickup goes to the next one */
 void mg_core_set_guard(bool on);
-/* Il genlock (core di questo repository, interfaccia mm 1.5): la fase del core segue gli arrivi */
+/* The genlock (this repository's core, interface mm 1.5): the core's phase follows the arrivals */
 void mg_core_set_genlock(bool on);
-/* Col genlock: il core tiene un'immagine di riserva (un quadro in più, come la guardia) */
+/* With the genlock: the core keeps one picture in reserve (one more frame, like the guard) */
 void mg_core_set_gl_lag(bool on);
-/* Dopo una sessione col genlock +1: perché la riserva non c'era ("" se c'era) */
+/* After a session with genlock +1: why the reserve was missing ("" if it was there) */
 const char *mg_core_gl_lag_problem(void);
-/* Dopo una sessione col genlock chiesto: perché non ha lavorato ("" se ha lavorato) */
+/* After a session with the genlock requested: why it did not work ("" if it did) */
 const char *mg_core_genlock_problem(void);
 void mg_core_tick(void);
 bool mg_core_osd_open(void);
 
-/* Frequenza dei quadri del core e fps da chiedere a Sunshine (x100) */
+/* The core's frame rate and the fps to ask Sunshine for (x100) */
 typedef struct {
   int refresh_x100;   /* 5994, 6000, 5000; 5991 / 4999 a 240p / 288p */
   bool interlaced;    /* 480i/576i sull'uscita analogica */
-  bool p240;          /* 240p/288p durante lo stream (core di core/, 240p Playback) */
-  int raster_h;       /* 480 o 576 */
-  int raster_w;       /* 720 (core originale) o 640 (core di core/) */
+  bool p240;          /* 240p/288p during the stream (core in core/, 240p Playback) */
+  int raster_h;       /* 480 or 576 */
+  int raster_w;       /* 720 (original core) or 640 (core in core/) */
   unsigned max_mbs, mb_rate;
 } mg_core_info;
 void mg_core_get_info(mg_core_info *ci);
 
-/* Inizio e fine di uno stream: svuota il ring e azzera il decoder (schermo
- * nero fino al primo IDR), nasconde/mostra l'overlay del menu. */
+/* Start and end of a stream: empties the ring and resets the decoder (black screen
+ * until the first IDR), hides/shows the menu overlay. */
 void mg_core_stream_begin(void);
 void mg_core_stream_end(void);
 
-/* Overlay: copia il canvas (0xRRGGBB, w x h) ingrandito x2 e lo mostra */
+/* Overlay: copies the canvas (0xRRGGBB, w x h) doubled and shows it */
 int  mg_core_overlay_present(const uint32_t *canvas, int w, int h);
 void mg_core_overlay_hide(void);
 

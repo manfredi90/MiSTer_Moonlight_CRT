@@ -42,7 +42,7 @@ typedef struct _SERVER_DATA {
   unsigned short httpsPort;
 } SERVER_DATA, *PSERVER_DATA;
 
-/* moonlight-groovy: perché è fallita l'ultima richiesta serverinfo su HTTPS (vuoto se è andata) */
+/* moonlight-groovy: why the last serverinfo request over HTTPS failed (empty if it worked) */
 extern char gs_https_error[160];
 
 int gs_init(PSERVER_DATA server, char* address, unsigned short httpPort, const char *keyDirectory, int logLevel, bool unsupported);

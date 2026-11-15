@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Finto Sunshine minimo per provare il menu di moonlight-groovy senza un PC:
-risponde a serverinfo e applist (HTTP 47989 e HTTPS 47984). Non fa streaming.
+A minimal fake Sunshine to test the menu without a PC: it answers serverinfo and
+applist (HTTP 47989 and HTTPS 47984). It does not stream.
 
-Uso: fake_sunshine.py <cert.pem> <key.pem> [--unpaired] [--running ID] [--https-dead]
-  (come Sunshine vero, su HTTP risponde sempre PairStatus 0)
+Usage: fake_sunshine.py <cert.pem> <key.pem> [--unpaired] [--running ID] [--https-dead]
+  (like the real Sunshine, over HTTP it always answers PairStatus 0)
 """
 import ssl
 import sys
@@ -18,7 +18,7 @@ if "--running" in sys.argv:
     running = int(sys.argv[sys.argv.index("--running") + 1])
 
 APPS = ["Desktop", "Steam Big Picture", "Retroarch", "Hollow Knight", "Celeste",
-        "Hades", "Street Fighter 6", "Forza Horizon 5", "Gioco con un nome davvero molto lungo"]
+        "Hades", "Street Fighter 6", "Forza Horizon 5", "A game with a really very long name"]
 
 
 def serverinfo(https=True):
@@ -39,7 +39,7 @@ def applist():
 
 class H(BaseHTTPRequestHandler):
     if "--sunshine-close" in sys.argv:
-        protocol_version = "HTTP/1.1"  # risposta senza "Connection: close": curl tiene la connessione
+        protocol_version = "HTTP/1.1"  # reply without "Connection: close": curl keeps the connection
     def do_GET(self):
         global running
         path = self.path.split("?")[0]
@@ -52,7 +52,7 @@ class H(BaseHTTPRequestHandler):
             running = 0
             body = "<root status_code=\"200\"><cancel>1</cancel></root>"
         elif path == "/pair":
-            threading.Event().wait(3600)  # resta in attesa del PIN per sempre
+            threading.Event().wait(3600)  # waits for the PIN forever
             return
         else:
             self.send_error(404)
@@ -64,15 +64,15 @@ class H(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
         if "--sunshine-close" in sys.argv:
-            self.close_connection = True  # come Sunshine: chiude senza dirlo nell'intestazione
+            self.close_connection = True  # like Sunshine: closes without saying so in the header
 
     def log_message(self, *a):
         pass
 
     def finish(self):
         super().finish()
-        # come Sunshine: un solo thread HTTPS, e dopo la risposta manda la
-        # notifica di chiusura TLS aspettando quella del client
+        # like Sunshine: a single HTTPS thread, and after the reply it sends the
+        # TLS close notify and waits for the client's
         if self.server.server_address[1] == 47984 and "--sunshine-close" in sys.argv:
             try:
                 self.connection.unwrap()
@@ -87,9 +87,9 @@ ctx.load_cert_chain(cert, key)
 ctx.verify_mode = ssl.CERT_NONE
 https.socket = ctx.wrap_socket(https.socket, server_side=True)
 threading.Thread(target=http.serve_forever, daemon=True).start()
-print("Finto Sunshine su 47989/47984", flush=True)
+print("Fake Sunshine on 47989/47984", flush=True)
 if "--https-dead" in sys.argv:
-    # la porta HTTPS accetta le connessioni ma nessuno risponde (thread bloccato)
-    print("HTTPS bloccato", flush=True)
+    # the HTTPS port accepts connections but nobody answers (thread blocked)
+    print("HTTPS blocked", flush=True)
     threading.Event().wait()
 https.serve_forever()

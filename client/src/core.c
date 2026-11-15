@@ -1,21 +1,21 @@
 /*
- * Uscita sul core H264 del MiSTer (decoder H.264 in FPGA, owenb321/MiSTer_h264_decoder):
- * ogni decode unit di Sunshine diventa un record VIDEO_AU nel ring in DDR3, l'audio
- * Opus decodificato qui un record AUDIO, il menu un overlay nel framebuffer di Linux
- * che il core sovrappone al video. Interfaccia: third_party/h264ring (h264ring.h).
+ * Output on the MiSTer's H264 core (an H.264 decoder in the FPGA, owenb321/MiSTer_h264_decoder):
+ * each Sunshine decode unit becomes a VIDEO_AU record in the DDR3 ring, the Opus audio decoded
+ * here an AUDIO record, the menu an overlay in Linux's framebuffer that the core lays over the
+ * video. Interface: third_party/h264ring (h264ring.h).
  *
- * La gestione della sessione, degli errori e del battito del core segue il client
- * Moonlight di riferimento del progetto (clients/moonlight/src/mister/mister.c):
- * - LOW_LATENCY | GRAPHICS su ogni access unit, senza PTS: il core mostra ogni
- *   immagine appena decodificata e suona l'audio appena arriva.
- * - Una sola mutex attorno a ogni chiamata alla libreria (non è thread-safe); un
- *   ring pieno si aspetta con le chiamate try_ e una pausa fuori dalla mutex.
- * - Errori di decodifica (contatori del core) -> LiRequestIdrFrame. Una sessione
- *   persa (Reset dall'OSD) si riapre; un rifiuto dello stream lo chiude.
- * - Core scaricato (un altro core caricato dall'OSD): il battito del blocco di
- *   stato si ferma; si esce dal programma.
- * - L'audio aspetta il primo IDR della sessione: la modalità dello stream (a bassa
- *   latenza) la decide il suo primo VIDEO_AU.
+ * The handling of the session, the errors and the core's heartbeat follows the project's
+ * reference Moonlight client (clients/moonlight/src/mister/mister.c):
+ * - LOW_LATENCY | GRAPHICS on every access unit, without PTS: the core shows each picture as
+ *   soon as it is decoded and plays the audio as soon as it arrives.
+ * - A single mutex around every call into the library (it is not thread-safe); a full ring is
+ *   waited on with the try_ calls and a pause outside the mutex.
+ * - Decode errors (the core's counters) -> LiRequestIdrFrame. A lost session (Reset from the
+ *   OSD) is reopened; a refused stream closes it.
+ * - Core unloaded (another core loaded from the OSD): the status block's heartbeat stops; the
+ *   program exits.
+ * - The audio waits for the session's first IDR: the stream's mode (low latency) is decided by
+ *   its first VIDEO_AU.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -44,14 +44,14 @@
 #include <unistd.h>
 
 #define AU_FLAGS        (H264RING_F_LOW_LATENCY | H264RING_F_GRAPHICS)
-#define VIDEO_WAIT_MS   500     /* ring pieno così a lungo: il decoder è indietro, si scarta l'AU */
-#define AUDIO_WAIT_MS   20      /* l'audio si scarta piuttosto che aspettare (il core copre il buco) */
+#define VIDEO_WAIT_MS   500     /* ring full for this long: the decoder is behind, the AU is dropped */
+#define AUDIO_WAIT_MS   20      /* the audio is dropped rather than waited for (the core covers the gap) */
 #define LAUNCH_MS       15000
 #define SESSION_MS      2000
 #define FLUSH_MS        1000
-#define ALIVE_MS        1500    /* niente battito per questo tempo: il core non c'è più */
+#define ALIVE_MS        1500    /* no heartbeat for this long: the core is gone */
 #define IDR_RETRY_MS    1000
-#define IDR_GRACE_MS    250     /* errori subito dopo un IDR: riguardano le immagini prima */
+#define IDR_GRACE_MS    250     /* errors right after an IDR: they concern the pictures before it */
 #define RESTART_MS      1000
 #define W_EARLY         1
 #define OVL_MAX_H       576
@@ -78,24 +78,25 @@ static int16_t *pcm2;
 
 static mg_core_counters n;
 
-/* ---------- il ritmo delle immagini ----------
- * In bassa latenza il core prende, a riga ~500 di ogni quadro, la più vecchia immagine decodificata;
- * se ne aspetta già un'altra dietro, la più vecchia la scarta (riga 490). Se le immagini arrivano
- * vicino a quel momento, un ritardo di qualche ms (Wi-Fi, decodifica) le fa cadere ora prima ora
- * dopo: un quadro ripetuto e poi un'immagine scartata, a raffiche, ogni volta che il ritmo del PC
- * (59,95 per esempio) porta gli arrivi su quel punto.
+/* ---------- the pictures' rhythm ----------
+ * In low latency the core takes, at line ~500 of each frame, the oldest decoded picture; if
+ * another already waits behind it, the oldest is dropped (line 490). If the pictures arrive near
+ * that moment, a delay of a few ms (Wi-Fi, decoding) makes them land now before now after: a
+ * repeated frame and then a dropped picture, in bursts, every time the PC's rhythm (59.95 for
+ * example) brings the arrivals onto that point.
  *
- * NOTA (0.1.5): il core chiude un'immagine solo quando arriva l'inizio della successiva (la chiusura
- * a fine record, "P3e", non c'è ancora): finché è così il passo non può funzionare (aspetterebbe la
- * presa di un'immagine che si completa solo scrivendo la successiva) ed è spento in modo predefinito.
+ * NOTE (0.1.5): the core closes a picture only when the start of the next one arrives (the close
+ * at the record's end, "P3e", is not there yet): as long as that holds pacing cannot work (it
+ * would wait for the pickup of a picture that completes only by writing the next) and it is off
+ * by default.
  *
- * Il passo (pacing): al core si scrive un'immagine solo quando la precedente è già stata presa (o
- * scartata). Dopo un arrivo in ritardo (un quadro ripetuto) le immagini seguenti vengono scritte
- * subito dopo ogni presa, con un quadro intero per decodificarle: niente più raffiche, solo la
- * ripetizione che lo scarto di ritmo col PC rende inevitabile. Si scrive comunque se dietro c'è già
- * un'immagine più nuova (non si accumula ritardo) o dopo PACE_MAX_MS (un'immagine persa).
+ * Pacing: a picture is written to the core only when the previous one was already taken (or
+ * dropped). After a late arrival (a repeated frame) the following pictures are written right
+ * after each pickup, with a whole frame to decode them: no more bursts, only the repeat that the
+ * rhythm difference with the PC makes unavoidable. A picture is written anyway if a newer one
+ * already waits behind it (no delay builds up) or after PACE_MAX_MS (a lost picture).
  *
- * Con -stats: ogni immagine saltata / ripetuta all'istante, e ogni 10 s un riepilogo. */
+ * With -stats: each skipped / repeated picture at once, and a summary every 10 s. */
 #define RITMO_PERIOD_S 10
 #define PACE_MAX_MS    50
 static bool pacing = false;
@@ -103,28 +104,28 @@ static struct {
   bool on;
   uint32_t pick_last, skip_last, starve_last;
   uint64_t t0_ms, t_last_ms;
-  /* finestra corrente */
+  /* current window */
   unsigned frames, held, held_us_max, forced, lost;
   uint64_t held_us_sum;
   uint32_t rtp_first, rtp_last;
-  int64_t jit_min, jit_max;    /* arrivo - tempo del PC (rtp), us */
+  int64_t jit_min, jit_max;    /* arrival - the PC's time (rtp), us */
   unsigned skips, starves, picks;
 } rt;
-static uint32_t pace_written, pace_base;   /* scritte dall'inizio dello stream; prese + scartate all'inizio */
+static uint32_t pace_written, pace_base;   /* written since the stream's start; taken + dropped at the start */
 
-void mg_core_set_ritmo(bool on) { rt.on = on; }
+void mg_core_set_rhythm(bool on) { rt.on = on; }
 void mg_core_set_pacing(bool on) { pacing = on; }
 static bool guard_on, genlock_req;
 
-/* LA TRACCIA (con -stats): una riga per immagine e una per quadro del core, in memoria; scritta in
- * traccia.csv accanto al programma alla fine dello stream (scrivere sulla SD durante lo stream può
- * bloccare). Serve a rigiocare una sessione vera fuori dal MiSTer (client/tools/genlock_replay.py). */
+/* THE TRACE (with -stats): one line per picture and one per core frame, in memory; written to
+ * trace.csv next to the program at the stream's end (writing to the SD during the stream can
+ * block). It lets a real session be replayed away from the MiSTer (client/tools/genlock_replay.py). */
 static char *tr_buf;
 static size_t tr_len, tr_cap;
 static bool tr_on;
 static void tr_printf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static void tr_printf(const char *fmt, ...) {
-  static pthread_mutex_t tr_mx = PTHREAD_MUTEX_INITIALIZER;   /* il thread video e quello della griglia */
+  static pthread_mutex_t tr_mx = PTHREAD_MUTEX_INITIALIZER;   /* the video thread and the grid's */
   if (!tr_on || !tr_buf)
     return;
   pthread_mutex_lock(&tr_mx);
@@ -141,9 +142,9 @@ static void tr_begin(void) {
   tr_len = 0;
   if (!tr_buf) { tr_cap = 12u << 20; tr_buf = malloc(tr_cap); }
   tr_on = tr_buf != NULL;
-  tr_printf("# tipo F (immagine): w_us,recv_us,rtp,byte,idr,phv,errore,obiettivo,margine,D,trim,agganciato,trattenuta_us,v_us\n"
-            "# tipo E (inizio quadro del core): s_us,seq,prese,scartate,ripetute,Pm_us,t_ref_us,eoff_us,"
-            "tm_now (27 MHz >> 10),tm_start (27 MHz),tm_emit (27 MHz),immagini iniziate,immagini emesse\n");
+  tr_printf("# type F (picture): w_us,recv_us,rtp,bytes,idr,phv,error,target,margin,D,trim,locked,held_us,v_us\n"
+            "# type E (core frame start): s_us,seq,picks,skips,starves,Pm_us,t_ref_us,eoff_us,"
+            "tm_now (27 MHz >> 10),tm_start (27 MHz),tm_emit (27 MHz),pictures started,pictures emitted\n");
 }
 static void tr_end(void) {
   if (!tr_on || !tr_len)
@@ -155,18 +156,18 @@ static void tr_end(void) {
   path[n] = 0;
   char *sl = strrchr(path, '/');
   if (!sl) return;
-  strcpy(sl + 1, "traccia.csv");
+  strcpy(sl + 1, "trace.csv");
   FILE *f = fopen(path, "w");
   if (!f) return;
   fwrite(tr_buf, 1, tr_len, f);
   fclose(f);
-  printf("[traccia] %zu byte in %s\n", tr_len, path);
+  printf("[trace] %zu bytes in %s\n", tr_len, path);
 }
-static char gl_problem[200];           /* perché il genlock chiesto non ha lavorato (vuoto: nessun problema) */
+static char gl_problem[200];           /* why the requested genlock did not work (empty: no problem) */
 const char *mg_core_genlock_problem(void) { return gl_problem; }
 void mg_core_set_guard(bool on) { guard_on = on; }
 void mg_core_set_genlock(bool on) { genlock_req = on; }
-/* il genlock +1: il core tiene un'immagine di riserva (parola 34 [25], applicata: parola 45 [2]) */
+/* genlock +1: the core keeps one picture in reserve (word 34 [25], applied: word 45 [2]) */
 static bool gl_lag_req;
 static char gl_lag_problem[160];
 void mg_core_set_gl_lag(bool on) { gl_lag_req = on; }
@@ -184,7 +185,7 @@ static struct h264ring_fb fb;
 static bool fb_ok;
 static unsigned ovl_fmt, ovl_bpp, ovl_pages, ovl_page;
 static uint32_t ovl_page_bytes;
-static int ovl_gen, ovl_w, ovl_h;   /* ovl_w: la larghezza del raster dell'ultimo disegno */
+static int ovl_gen, ovl_w, ovl_h;   /* ovl_w: the raster width of the last drawing */
 static int ovl_max_w;
 static bool ovl_shown;
 
@@ -203,12 +204,12 @@ static uint32_t err_sum(const struct h264ring_status *st) {
 
 static const char *refusal_name(unsigned code) {
   static const char *const names[] = {
-    "nessuno", "formato colore (non 4:2:0)", "profondita' (non 8 bit)", "scaling list",
-    "interlacciato MBAFF", "CAVLC (non CABAC)", "FMO", "trasformata 8x8",
-    "immagini ridondanti", "slice SP/SI", "data partitioning", "SVC/MVC",
-    "dimensioni (oltre 128 macroblocchi)",
+    "none", "colour format (not 4:2:0)", "bit depth (not 8 bits)", "scaling list",
+    "interlaced MBAFF", "CAVLC (not CABAC)", "FMO", "8x8 transform",
+    "redundant pictures", "slice SP/SI", "data partitioning", "SVC/MVC",
+    "size (over 128 macroblocks)",
   };
-  return code < sizeof(names) / sizeof(names[0]) ? names[code] : "sconosciuto";
+  return code < sizeof(names) / sizeof(names[0]) ? names[code] : "unknown";
 }
 
 static void core_gone_locked(void) {
@@ -216,7 +217,7 @@ static void core_gone_locked(void) {
     return;
   gone = true;
   session_ok = false;
-  printf("[core] il core H264 non risponde piu' (caricato un altro core?): esco\n");
+  printf("[core] the H264 core no longer answers (another core loaded?): exiting\n");
   if (gone_cb)
     gone_cb();
 }
@@ -232,7 +233,7 @@ static int session_start_locked(void) {
   }
   restarting = false;
   if (rc) {
-    printf("[core] sessione non aperta (%s)\n", strerror(-rc));
+    printf("[core] session not open (%s)\n", strerror(-rc));
     session_ok = false;
     return rc;
   }
@@ -246,7 +247,7 @@ static int session_start_locked(void) {
   need_idr = true;
   n.sessions++;
   if (n.sessions > 1)
-    printf("[core] sessione riaperta (%lu)\n", n.sessions);
+    printf("[core] session reopened (%lu)\n", n.sessions);
   return 0;
 }
 
@@ -264,7 +265,7 @@ static void poll_status_locked(void) {
   }
   osd_open = (H264RING_ST(&st, LIVE) & H264RING_L_OSD_OPEN) != 0;
   if (H264RING_ST(&st, STATE) == H264RING_S_ERROR && session_ok) {
-    printf("[core] il core ha fermato la sessione: %s a %u\n",
+    printf("[core] the core stopped the session: %s at %u\n",
            h264ring_error_name((unsigned)H264RING_ST(&st, ERR)), (unsigned)H264RING_ST(&st, ERR_POS));
     session_ok = false;
   }
@@ -272,11 +273,11 @@ static void poll_status_locked(void) {
     return;
   uint32_t refused = (uint32_t)H264RING_ST(&st, FE_REFUSED);
   if (refused != refused_base && session_ok) {
-    printf("[core] il core rifiuta lo stream: %s\n", refusal_name((unsigned)H264RING_ST(&st, FE_REFUSED_CODE)));
+    printf("[core] the core refuses the stream: %s\n", refusal_name((unsigned)H264RING_ST(&st, FE_REFUSED_CODE)));
     refused_base = refused;
     n.refusals++;
-    cavlc_refused = true; /* niente più AU: un IDR non lo cura */
-    snprintf(refused_why, sizeof(refused_why), "Il core rifiuta lo stream: %s",
+    cavlc_refused = true; /* no more AUs: an IDR does not cure it */
+    snprintf(refused_why, sizeof(refused_why), "The core refuses the stream: %s",
              refusal_name((unsigned)H264RING_ST(&st, FE_REFUSED_CODE)));
     if (refused_cb)
       refused_cb(refused_why);
@@ -298,7 +299,7 @@ static void poll_status_locked(void) {
   }
 }
 
-static void ritmo_reset_window(void) {
+static void rhythm_reset_window(void) {
   rt.frames = rt.held = rt.held_us_max = rt.forced = rt.lost = 0;
   rt.held_us_sum = 0;
   rt.jit_min = INT64_MAX;
@@ -306,7 +307,7 @@ static void ritmo_reset_window(void) {
   rt.skips = rt.starves = rt.picks = 0;
 }
 
-/* Ogni ~2 ms dal thread dell'input durante lo stream: gli scatti, all'istante */
+/* Every ~2 ms from the input thread during the stream: the hitches, at once */
 void mg_core_tick(void) {
   if (!rt.on || !streaming || restarting)
     return;
@@ -321,25 +322,25 @@ void mg_core_tick(void) {
   if (!rt.t0_ms) {
     rt.t0_ms = rt.t_last_ms = now_ms();
     rt.pick_last = pick; rt.skip_last = skip; rt.starve_last = starve;
-    ritmo_reset_window();
+    rhythm_reset_window();
   }
   double t = (now_ms() - rt.t0_ms) / 1000.0;
   rt.picks += pick - rt.pick_last;
   rt.pick_last = pick;
   if (skip != rt.skip_last) {
-    printf("[ritmo] %7.2f s: %u immagini scartate (due pronte nello stesso quadro)\n", t, skip - rt.skip_last);
+    printf("[rhythm] %7.2f s: %u pictures dropped (two ready in the same frame)\n", t, skip - rt.skip_last);
     rt.skips += skip - rt.skip_last;
     rt.skip_last = skip;
   }
   if ((uint16_t)(starve - rt.starve_last)) {
-    printf("[ritmo] %7.2f s: %u quadri senza immagine nuova (ripetuta)\n", t, (uint16_t)(starve - rt.starve_last));
+    printf("[rhythm] %7.2f s: %u frames without a new picture (repeated)\n", t, (uint16_t)(starve - rt.starve_last));
     rt.starves += (uint16_t)(starve - rt.starve_last);
     rt.starve_last = starve;
   }
 }
 
 static void guard_report(void);
-static void ritmo_au(PDECODE_UNIT du, uint64_t held_us, bool forced) {
+static void rhythm_au(PDECODE_UNIT du, uint64_t held_us, bool forced) {
   if (!rt.on || !rt.t0_ms)
     return;
   int64_t jit = (int64_t)du->receiveTimeUs - (int64_t)((uint64_t)du->rtpTimestamp * 1000000ull / 90000ull);
@@ -360,18 +361,18 @@ static void ritmo_au(PDECODE_UNIT du, uint64_t held_us, bool forced) {
     rt.t_last_ms = now_ms();
     double drtp = (double)(uint32_t)(rt.rtp_last - rt.rtp_first);
     double fps = drtp > 0 ? (rt.frames - 1) * 90000.0 / drtp : 0;
-    printf("[ritmo] %7.1f s: %u immagini, il PC a %.3f fps, arrivo +-%.1f ms; passo %s: %u trattenute "
-           "(media %.1f ms, max %.1f), %u scritte con una piu' nuova dietro, %u perse; "
-           "core: %u prese, %u scartate, %u ripetute\n",
-           t, rt.frames, fps, (rt.jit_max - rt.jit_min) / 2000.0, guard_on ? "guardia" : pacing ? "attivo" : "spento", rt.held,
+    printf("[rhythm] %7.1f s: %u pictures, the PC at %.3f fps, arrival +-%.1f ms; pacing %s: %u held "
+           "(mean %.1f ms, max %.1f), %u written with a newer one behind, %u lost; "
+           "core: %u picks, %u dropped, %u repeated\n",
+           t, rt.frames, fps, (rt.jit_max - rt.jit_min) / 2000.0, guard_on ? "guard" : pacing ? "on" : "off", rt.held,
            rt.held ? rt.held_us_sum / 1000.0 / rt.held : 0.0, rt.held_us_max / 1000.0, rt.forced, rt.lost,
            rt.picks, rt.skips, rt.starves);
     guard_report();
-    ritmo_reset_window();
+    rhythm_reset_window();
   }
 }
 
-/* Aspetta che l'immagine precedente sia stata presa o scartata dal core (il passo) */
+/* Waits until the core took or dropped the previous picture (pacing) */
 static void pace_wait(uint64_t *held_us, bool *forced) {
   *held_us = 0;
   *forced = false;
@@ -389,16 +390,16 @@ static void pace_wait(uint64_t *held_us, bool *forced) {
     int32_t pending = (int32_t)(pace_written - done);
     if (pending <= 0) {
       if (pending < 0)
-        pace_base += (uint32_t)pending; /* contate più prese che scritte (riavvio): si riallinea */
+        pace_base += (uint32_t)pending; /* more picks counted than writes (restart): realign */
       break;
     }
     uint64_t dt = now_us() - t0;
     if (LiGetPendingVideoFrames() > 0) {
-      *forced = true; /* ne è arrivata un'altra: niente ritardo accumulato, il core scarta la vecchia */
+      *forced = true; /* another one arrived: no delay builds up, the core drops the old one */
       break;
     }
     if (dt >= PACE_MAX_MS * 1000u) {
-      /* un'immagine mai presa (persa dal decoder): non la si aspetta più */
+      /* a picture never taken (lost by the decoder): no longer waited for */
       pace_base -= (uint32_t)pending;
       if (rt.on) rt.lost++;
       break;
@@ -410,113 +411,112 @@ static void pace_wait(uint64_t *held_us, bool *forced) {
     *held_us = 0;
 }
 
-/* ---------- la guardia di fase (-guard; core con la P3e) ----------
- * Col PC a 60,000 Hz esatti gli arrivi restano a lungo nella stessa posizione rispetto alla presa del
- * core: lontani da essa, tutto liscio; vicini, ogni ritardo di rete di qualche ms fa cadere
- * un'immagine ora in un quadro ora nel successivo (una ripetuta e una scartata, di continuo).
+/* ---------- the phase guard (-guard; core with P3e) ----------
+ * With the PC at exactly 60.000 Hz the arrivals stay a long time at the same place relative to
+ * the core's pickup: far from it, all smooth; near it, every network delay of a few ms makes a
+ * picture land now in one frame now in the next (one repeated and one dropped, continuously).
  *
- * La guardia misura la griglia del core sull'orologio dell'ARM: il blocco di stato si riscrive a
- * ogni quadro (SEQ_HEAD +1, all'inizio del quadro), la valutazione della presa cade a 428.142 / 450.000
- * del quadro (425.947 col 240p; h264/disp_ctl.sv). Un thread legge SEQ_HEAD ogni ~0,4 ms e un PLL
- * ne ricava la griglia. Su questa: la fase d'arrivo media phi delle immagini, la loro dispersione s, e
- * D, il tempo che il core impiega a decodificare un'immagine (imparato: un'immagine scritta in tempo
- * per una presa che invece la manca alza D).
+ * The guard measures the core's grid on the ARM's clock: the status block is rewritten every
+ * frame (SEQ_HEAD +1, at the frame's start), the pickup's evaluation falls at 428,142 / 450,000
+ * of the frame (425,947 at 240p; h264/disp_ctl.sv). A thread reads SEQ_HEAD every ~0.4 ms and a
+ * PLL derives the grid from it. On it: the pictures' mean arrival phase phi, their spread s, and
+ * D, the time the core takes to decode a picture (learned: a picture written in time for a pickup
+ * that misses it raises D).
  *
- * Finché la nuvola degli arrivi (phi +- s) resta lontana dalla scadenza della decodifica (P - D, con
- * l'incertezza di D) la guardia non fa nulla. Se ci si avvicina, mette un taglio c appena prima della
- * nuvola: le immagini che arrivano dopo c vengono trattenute fino alla prossima presa e scritte
- * subito dopo, così vanno tutte, con certezza, alla presa successiva (un quadro di latenza in più,
- * solo finché la fase è quella); quelle prima di c vanno alla prossima. La presa a cui va
- * un'immagine dipende allora da dove cade rispetto a c, lontano dalla nuvola, e non dal caso. Con
- * isteresi: il taglio si sposta se la nuvola gli si avvicina, e la guardia si spegne se la nuvola si
- * allontana dalla scadenza con largo margine per qualche secondo; con arrivi sparsi su più di
- * mezzo quadro nessun taglio aiuta e resta spenta. */
+ * While the arrivals' cloud (phi +- s) stays far from the decode deadline (P - D, with D's
+ * uncertainty) the guard does nothing. If it comes near, it sets a cut c just before the cloud:
+ * the pictures arriving after c are held until the next pickup and written right after it, so
+ * they all go, surely, to the following pickup (one more frame of latency, only while the phase
+ * is there); those before c go to the next one. The pickup a picture goes to then depends on
+ * where it lands relative to c, far from the cloud, and not on chance. With hysteresis: the cut
+ * moves if the cloud comes near it, and the guard turns off if the cloud stays far from the
+ * deadline with a wide margin for a few seconds; with arrivals spread over more than half a
+ * frame no cut helps and it stays off. */
 #define G_POLL_US     400
-#define G_XH          1200        /* il genlock: i ritardi delle ultime 1200 immagini (20 s) */
-#define G_Q_MAX_US    8000.0      /* ... e il margine al più mezzo quadro */
-#define G_FE          1800        /* il genlock: la frequenza del PC sulle ultime 1800 immagini (30 s) */
-#define G_LQ          32          /* la latenza: le code delle immagini scritte / emesse */
-#define G_LX          3600        /* ... x sulle ultime 3600 immagini (60 s) */
-#define G_LL          31          /* ... L: la mediana delle ultime 31 prese */
-#define G_FE_MIN_S    10.0        /* ... usata da 10 s di misura (prima, la stima d'avvio di 4 s) */
-#define G_FE_MAX_US   40.0        /* ... buona entro +-40 us a quadro (il PLL arriva a +-32) */
-#define G_FE_MAX_SD_US 1500.0     /* ... e con la fase entro 1,5 ms (scarto quadratico) dalla retta */
-/* La trattenuta delle immagini in anticipo è spenta: due versioni (fino a dopo / fino a prima della
- * presa precedente) hanno peggiorato le cose sul MiSTer (tracce del 14/11), e il modello dei tempi
- * del core che le giustificava non regge con la seconda traccia. Resta il codice, spento. */
+#define G_XH          1200        /* the genlock: the delays of the last 1200 pictures (20 s) */
+#define G_Q_MAX_US    8000.0      /* ... and the margin at most half a frame */
+#define G_FE          1800        /* the genlock: the PC's rate over the last 1800 pictures (30 s) */
+#define G_LQ          32          /* the latency: the queues of the written / emitted pictures */
+#define G_LX          3600        /* ... x over the last 3600 pictures (60 s) */
+#define G_LL          31          /* ... L: the median of the last 31 picks */
+#define G_FE_MIN_S    10.0        /* ... used from 10 s of measurement (before, the 4 s startup estimate) */
+#define G_FE_MAX_US   40.0        /* ... good within +-40 us a frame (the PLL reaches +-32) */
+#define G_FE_MAX_SD_US 1500.0     /* ... and with the phase within 1.5 ms (rms) of the line */
+/* Holding early pictures is off: two versions (until after / until before the previous pickup)
+ * made things worse on the MiSTer (traces of 14/11), and the model of the core's timings that
+ * justified them does not hold with the second trace. The code stays, off. */
 #define G_GL_HOLD     0
 #define G_MARGIN_US   1000.0
-#define G_D0_US       10500.0     /* D iniziale: 1.200 macroblocchi a ~110.000 al secondo */
+#define G_D0_US       10500.0     /* initial D: 1,200 macroblocks at ~110,000 a second */
 #define G_D_MIN_US    5000.0
-#define G_D_MAX_US    15000.0     /* la guardia (le sue zone suppongono D < un quadro) */
-#define G_D_MAX_GL_US 15000.0     /* il genlock: con 22 ms (per dare tempo alle immagini grandi) D
-                                   * saliva al massimo nella raffica d'avvio e le immagini piccole,
-                                   * pronte in pochi ms, si scontravano (traccia 4 del 14/11): torna
-                                   * a 15 finché i tempi di decodifica misurati dal core non dicono
-                                   * di più */
+#define G_D_MAX_US    15000.0     /* the guard (its zones assume D < one frame) */
+#define G_D_MAX_GL_US 15000.0     /* the genlock: with 22 ms (to give large pictures time) D
+                                   * rose to the maximum in the startup burst and the small pictures,
+                                   * ready in a few ms, collided (trace 4 of 14/11): back to 15
+                                   * until the decode times measured by the core say more */
 static struct {
   pthread_t th;
   volatile bool run;
   bool th_ok;
   pthread_mutex_t mx;
-  /* la griglia (protetta da mx) */
-  double P, eoff;                  /* periodo e posizione della valutazione nel quadro, us */
-  double t_ref;                    /* l'inizio di un quadro, us (CLOCK_MONOTONIC) */
-  double Pm;                       /* il periodo dei quadri misurato (col genlock cambia), us */
-  uint64_t w45;                    /* l'ultima parola 45: [25] PLL letto, [26] in movimento, [63:32] K */
-  bool gl_pll_fail;                /* il core non ha letto il suo PLL: il genlock è inutile, resta la guardia */
-  double gl_stuck_t0;              /* da quando il core è fermo su una scrittura al PLL (0: non lo è) */
-  int gl_lag_st;                   /* la riserva: 0 non chiesta, 1 chiesta, 2 applicata, 3 rifiutata */
+  /* the grid (protected by mx) */
+  double P, eoff;                  /* the period and the evaluation's position in the frame, us */
+  double t_ref;                    /* a frame's start, us (CLOCK_MONOTONIC) */
+  double Pm;                       /* the measured frame period (changes with the genlock), us */
+  uint64_t w45;                    /* the last word 45: [25] PLL read, [26] moving, [63:32] K */
+  bool gl_pll_fail;                /* the core did not read its PLL: the genlock is useless, the guard stays */
+  double gl_stuck_t0;              /* since when the core has been stuck on a PLL write (0: it is not) */
+  int gl_lag_st;                   /* the reserve: 0 not asked, 1 asked, 2 applied, 3 refused */
   double gl_lag_t0;
   unsigned samples, outliers;
-  /* il blocco di stato all'ultimo quadro */
+  /* the status block at the last frame */
   uint32_t pick, starve;
   bool have_snap;
-  /* gli arrivi */
-  double ex, ey;                   /* media circolare (EMA) */
-  double mad;                      /* scarto medio assoluto dalla fase media, us */
+  /* the arrivals */
+  double ex, ey;                   /* circular mean (EMA) */
+  double mad;                      /* mean absolute deviation from the mean phase, us */
   unsigned arrivals;
-  double D;                        /* tempo di decodifica stimato, us */
-  int mode;                        /* 0 taglio alla scadenza, 1 taglio fisso */
+  double D;                        /* estimated decode time, us */
+  int mode;                        /* 0 cut at the deadline, 1 fixed cut */
   double cut, fixed_cut;
-  unsigned good_run;               /* immagini col taglio preferito libero (per tornarci) */
-  /* immagini scritte in attesa dell'esito: l'istante della scrittura e la presa attesa */
+  unsigned good_run;               /* pictures with the preferred cut free (to go back to it) */
+  /* pictures written awaiting the outcome: the write's instant and the expected pickup */
   struct { double wr, ev; bool idr; } pend[4];
   unsigned npend;
-  /* LA LATENZA VERA, immagine per immagine (dai contatori del core, parole 23, 85, 31 e le prese):
-   * le immagini scritte (v: l'arrivo nominale dal timestamp RTP) aspettano di essere emesse dal
-   * decodificatore, quelle emesse di essere prese o scartate, in ordine. x = pronta - v (decodifica
-   * più rete), L = presa - v (la latenza dall'arrivo nominale allo schermo) */
-  double lq_w[G_LQ], lq_e[G_LQ];   /* scritte: v; emesse: v */
+  /* THE TRUE LATENCY, picture by picture (from the core's counters, words 23, 85, 31 and the picks):
+   * the written pictures (v: the nominal arrival from the RTP timestamp) wait to be emitted by the
+   * decoder, the emitted ones to be taken or dropped, in order. x = ready - v (decoding plus
+   * network), L = pickup - v (the latency from the nominal arrival to the screen) */
+  double lq_w[G_LQ], lq_e[G_LQ];   /* written: v; emitted: v */
   unsigned lq_wh, lq_wn, lq_eh, lq_en;
   uint32_t lq_oe, lq_pk, lq_sk;
   bool lq_have;
-  unsigned lq_wmin, lq_wmin_n;     /* la coda delle scritte, il minimo su 120 quadri */
+  unsigned lq_wmin, lq_wmin_n;     /* the written queue, its minimum over 120 frames */
   double lx[G_LX]; unsigned lx_i, lx_n;      /* x */
   double ll[G_LL]; unsigned ll_i, ll_n;      /* L */
-  double lx50, lx999, lL;          /* le statistiche (ogni mezzo secondo) */
+  double lx50, lx999, lL;          /* the statistics (every half second) */
   double lsum, lr[4];
   unsigned lcnt, lr_i, lr_n;
   bool lstat, lag_ctl;
   double lag_Lt;
   unsigned lq_resync;
-  /* contatori per -stats */
+  /* counters for -stats */
   unsigned held, misses, switches, hits;
   double held_us_sum;
-  /* il genlock (core di questo repository, interfaccia mm 1.5) */
-  int gl_state;                    /* 0 spento, 1 in prova (il core lo applica?), 2 attivo, 3 non supportato */
-  double gl_t0;                    /* quando è stato chiesto (per la prova) */
-  int gl_trim, gl_trim_sent;       /* la frequenza del core in 2^-16 (+ più lenta) */
-  double gl_integ;                 /* la parte integrale: us a quadro (la differenza di frequenza col PC) */
-  double gl_L;                     /* la durata di una riga, us */
-  double gl_target, gl_err;        /* fase obiettivo degli arrivi e l'errore, us */
-  double gl_err_abs;               /* per -stats: errore medio assoluto */
+  /* the genlock (this repository's core, interface mm 1.5) */
+  int gl_state;                    /* 0 off, 1 on trial (does the core apply it?), 2 active, 3 unsupported */
+  double gl_t0;                    /* when it was asked (for the trial) */
+  int gl_trim, gl_trim_sent;       /* the core's rate in 2^-16 (+ slower) */
+  double gl_integ;                 /* the integral part: us a frame (the rate difference with the PC) */
+  double gl_L;                     /* a line's duration, us */
+  double gl_target, gl_err;        /* the arrivals' target phase and the error, us */
+  double gl_err_abs;               /* for -stats: mean absolute error */
   unsigned gl_n;
-  /* la frequenza dei quadri del core, misurata sull'orologio dell'ARM (al secondo: min / max) */
+  /* the core's frame rate, measured on the ARM's clock (per second: min / max) */
   double r_t0, r_min, r_max;
-  /* la stima della frequenza del PC all'avvio del genlock (FLL) */
+  /* the PC rate estimate at the genlock's start (FLL) */
   bool fll_done;
-  /* il ritmo del PC (timestamp RTP) per il genlock */
+  /* the PC's rhythm (RTP timestamp) for the genlock */
   bool rtp_have, q_init, gl_locked, d_have, gl_relock, p240, rtp_prev_have;
   double rtp_prev_us;
   uint32_t rtp_last;
@@ -526,8 +526,8 @@ static struct {
   unsigned xh_i, xh_n, xh_cnt, gl_good;
   double fll_start, fll_t0, fll_prev, fll_phu, fll_sx, fll_sy, fll_sxx, fll_sxy;
   unsigned fll_n;
-  /* la frequenza del PC misurata di continuo (sostituisce l'integrale): la pendenza di
-   * Y = fase del timestamp RTP (srotolata) + la fase tolta dal trim applicato al core */
+  /* the PC's rate measured continuously (replaces the integral): the slope of
+   * Y = the RTP timestamp's phase (unwrapped) + the phase the trim applied to the core removed */
   double fe_x[G_FE], fe_y[G_FE];
   unsigned fe_i, fe_n, fe_cnt;
   bool fe_have, fe_valid;
@@ -546,18 +546,18 @@ static int g_fcmp(const void *a, const void *b) {
   float x = *(const float *)a, y = *(const float *)b;
   return (x > y) - (x < y);
 }
-static double g_cdist(double a, double b, double P) {   /* distanza circolare */
+static double g_cdist(double a, double b, double P) {   /* circular distance */
   double d = fabs(g_wrap(a - b, P));
   return d > P / 2 ? P - d : d;
 }
 
-/* il thread della griglia */
+/* the grid's thread */
 static void *guard_thread(void *arg) {
   (void)arg;
   volatile uint64_t *ctrl = NULL;
   pthread_mutex_lock(&ring_mx);
   if (ring)
-    ctrl = ((struct h264ring_backend *)ring)->ctrl;   /* be è il primo campo di struct h264ring */
+    ctrl = ((struct h264ring_backend *)ring)->ctrl;   /* be is struct h264ring's first field */
   pthread_mutex_unlock(&ring_mx);
   if (!ctrl)
     return NULL;
@@ -568,7 +568,7 @@ static void *guard_thread(void *arg) {
     double t = (double)now_us();
     uint32_t seq = (uint32_t)ctrl[H264RING_SEQ_HEAD_W];
     if (seq != last) {
-      double s = 0.5 * (t_prev + t);   /* il cambio è caduto tra le due letture */
+      double s = 0.5 * (t_prev + t);   /* the change fell between the two reads */
       pthread_mutex_lock(&g.mx);
       if (!g.r_t0) { g.r_t0 = s; g.r_n = 0; }
       g.r_n += (uint32_t)(seq - last);
@@ -586,8 +586,8 @@ static void *guard_thread(void *arg) {
         snap = h264ring_status(ring, &st) == 0;
       pthread_mutex_unlock(&ring_mx);
       pthread_mutex_lock(&g.mx);
-      /* PLL del secondo ordine sugli inizi dei quadri: fase (t_ref) e periodo (Pm), che col genlock
-       * scivola insieme al PLL video del core (non si ricava dal trim: il core ci arriva per gradi) */
+      /* second-order PLL on the frames' starts: phase (t_ref) and period (Pm), which with the genlock
+       * glides along with the core's video PLL (not derived from the trim: the core gets there by degrees) */
       if (!g.samples) {
         g.t_ref = s;
         g.Pm = g.P;
@@ -596,9 +596,9 @@ static void *guard_thread(void *arg) {
         double k = floor((s - g.t_ref) / Pe + 0.5);
         double err = s - (g.t_ref + k * Pe);
         if (fabs(err) > 2500 && g.samples > 60) {
-          if (++g.outliers > 30) {                                   /* persa: da capo */
+          if (++g.outliers > 30) {                                   /* lost: start over */
             g.samples = 0, g.outliers = 0;
-            if (g.gl_state == 2) { g.gl_relock = true; printf("[genlock] griglia dei quadri persa: si riaggancia\n"); }
+            if (g.gl_state == 2) { g.gl_relock = true; printf("[genlock] frame grid lost: re-locking\n"); }
           }
         } else {
           g.outliers = 0;
@@ -615,14 +615,14 @@ static void *guard_thread(void *arg) {
         uint32_t pick = (uint32_t)H264RING_ST(&st, DISP_PICK);
         uint32_t starve = (uint32_t)H264RING_ST(&st, DISP_STARVE) & 0xffffu;
         if (g.have_snap && g.samples > 60) {
-          /* la valutazione appena passata: il quadro iniziato a s, meno un periodo, più eoff */
+          /* the evaluation just passed: the frame started at s, minus a period, plus eoff */
           double ev = s - g.P + g.eoff;
           bool starved = ((starve - g.starve) & 0xffffu) != 0;
           bool picked = pick != g.pick;
           unsigned j = 0;
           for (unsigned i = 0; i < g.npend; i++) {
             if (fabs(g.pend[i].ev - ev) < g.P / 2) {
-              double slack = g.pend[i].ev - g.pend[i].wr;   /* il tempo che aveva per decodificarsi */
+              double slack = g.pend[i].ev - g.pend[i].wr;   /* the time it had to decode */
               if (starved && !picked) {
                 g.misses++;
                 if (!g.pend[i].idr && slack + 500 > g.D) g.D = fmin(g.gl_state == 2 ? G_D_MAX_GL_US : G_D_MAX_US, slack + 500);
@@ -631,7 +631,7 @@ static void *guard_thread(void *arg) {
                 if (!g.pend[i].idr && slack < g.D + 2000) g.D = fmax(G_D_MIN_US, g.D - (g.gl_state == 2 ? 1 : 5));
               }
             } else if (g.pend[i].ev > ev) {
-              g.pend[j++] = g.pend[i];                        /* non ancora */
+              g.pend[j++] = g.pend[i];                        /* not yet */
             }
           }
           g.npend = j;
@@ -643,39 +643,39 @@ static void *guard_thread(void *arg) {
         tr_printf("E,%.0f,%u,%u,%u,%u,%.1f,%.0f,%.0f,%u,%u,%u,%u,%u\n", s, seq, pick, (uint32_t)H264RING_ST(&st, DISP_SKIP), starve,
                     g.Pm, g.t_ref, g.eoff, (unsigned)(st.w[31] >> 42), (unsigned)(st.w[45] >> 32), (unsigned)(st.w[85] >> 32),
                     (unsigned)(st.w[15] & 0xffffffffu), (unsigned)(st.w[23] >> 32));
-        /* il genlock: il core lo applica? (parola 45: [24] GL_EN applicato, [1] parola 34 rifiutata) */
+        /* the genlock: does the core apply it? (word 45: [24] GL_EN applied, [1] word 34 refused) */
         g.w45 = st.w[45];
-        /* 480i <-> 240p dall'OSD: la presa cade altrove nel quadro e il raster riparte con un'altra
-         * fase; il genlock agganciato (correzione limitata) ci metterebbe 20 s: si riaggancia */
+        /* 480i <-> 240p from the OSD: the pickup falls elsewhere in the frame and the raster restarts with
+         * another phase; the locked genlock (limited correction) would take 20 s: re-lock */
         if ((st.w[1] & 0xFFFFu) >= 0x103u) {
-          /* [15] il raster fisico è ora 240p (non [4] && [13], la richiesta e l'interlacciato:
-           * in sessione davano 480i col core in 240p e non vedevano il passaggio, che arrivava solo
-           * come griglia persa, 15/11) */
+          /* [15] the physical raster is now 240p (not [4] && [13], the request and interlaced: in a
+           * session they gave 480i with the core at 240p and missed the switch, which came only
+           * as a lost grid, 15/11) */
           bool p240n = (st.w[87] >> 15) & 1u;
           if (p240n != g.p240) {
             g.p240 = p240n;
             g.eoff = g.P * (p240n ? 425947.0 : 428142.0) / 450000.0;
             g.gl_relock = true;
-            printf("[genlock] raster %s: si riaggancia\n", p240n ? "240p" : "480i");
+            printf("[genlock] raster %s: re-locking\n", p240n ? "240p" : "480i");
           }
         }
-        /* il genlock attivo ma il PLL del core non letto dopo 4 s: non può muoversi, si torna alla guardia */
+        /* the genlock active but the core's PLL not read after 4 s: it cannot move, back to the guard */
         if (g.gl_state == 2 && !((g.w45 >> 25) & 1) && s - g.gl_t0 > 4000000 && !g.gl_pll_fail) {
           g.gl_pll_fail = true;
           g.gl_state = 3;
-          snprintf(gl_problem, sizeof(gl_problem), "il core non legge il suo PLL video (stato %u, letture 0x%08x)",
+          snprintf(gl_problem, sizeof(gl_problem), "the core does not read its video PLL (state %u, reads 0x%08x)",
                    (unsigned)(g.w45 >> 27) & 15u, (unsigned)(g.w45 >> 32));
-          printf("[genlock] %s: %s\n", gl_problem, guard_on ? "resta la guardia" : "nessuna sincronizzazione");
+          printf("[genlock] %s: %s\n", gl_problem, guard_on ? "the guard stays" : "no sync");
         }
-        /* ... o letto, ma ogni scrittura resta in attesa (waitrequest alto) per 3 s: il PLL non risponde */
+        /* ... or read, but every write stays pending (waitrequest high) for 3 s: the PLL does not answer */
         unsigned pst = (unsigned)(g.w45 >> 27) & 15u;
         if (g.gl_state == 2 && (pst == 8 || pst == 9) && ((g.w45 >> 31) & 1)) {
           if (!g.gl_stuck_t0) g.gl_stuck_t0 = s;
           else if (s - g.gl_stuck_t0 > 3000000 && !g.gl_pll_fail) {
             g.gl_pll_fail = true;
             g.gl_state = 3;
-            snprintf(gl_problem, sizeof(gl_problem), "il PLL video del core non accetta le scritture (stato %u)", pst);
-            printf("[genlock] %s: %s\n", gl_problem, guard_on ? "resta la guardia" : "nessuna sincronizzazione");
+            snprintf(gl_problem, sizeof(gl_problem), "the core's video PLL does not take writes (state %u)", pst);
+            printf("[genlock] %s: %s\n", gl_problem, guard_on ? "the guard stays" : "no sync");
           }
         } else {
           g.gl_stuck_t0 = 0;
@@ -683,11 +683,11 @@ static void *guard_thread(void *arg) {
         if (g.gl_lag_st == 1) {
           if ((g.w45 >> 2) & 1) {
             g.gl_lag_st = 2;
-            printf("[genlock] il core tiene un'immagine di riserva (un quadro in più)\n");
+            printf("[genlock] the core keeps one picture in reserve (one more frame)\n");
           } else if (((g.w45 >> 1) & 1) || s - g.gl_lag_t0 > 1500000) {
             g.gl_lag_st = 3;
-            snprintf(gl_lag_problem, sizeof(gl_lag_problem), "il core caricato non ha la riserva (genlock +1)");
-            printf("[genlock] %s: resta il genlock senza riserva\n", gl_lag_problem);
+            snprintf(gl_lag_problem, sizeof(gl_lag_problem), "the loaded core has no reserve (genlock +1)");
+            printf("[genlock] %s: plain genlock without the reserve\n", gl_lag_problem);
             pthread_mutex_lock(&ring_mx);
             if (ring) h264ring_set_gl_lag(ring, 0);
             pthread_mutex_unlock(&ring_mx);
@@ -697,9 +697,9 @@ static void *guard_thread(void *arg) {
           uint64_t w45 = st.w[45];
           if ((w45 >> 24) & 1) {
             g.gl_state = 2;
-            printf("[genlock] il core lo applica\n");
-            /* la riserva solo ora: un core che non la conosce rifiuta tutta la parola 34 (e terrebbe
-             * fermo anche il trim), così il genlock è già applicato e la si toglie se rifiutata */
+            printf("[genlock] the core applies it\n");
+            /* the reserve only now: a core that does not know it refuses the whole word 34 (and would hold
+             * the trim too), so the genlock is already applied and the reserve is dropped if refused */
             if (gl_lag_req) {
               g.gl_lag_st = 1;
               g.gl_lag_t0 = s;
@@ -708,7 +708,7 @@ static void *guard_thread(void *arg) {
               pthread_mutex_unlock(&ring_mx);
             }
           } else if (((w45 >> 1) & 1) || s - g.gl_t0 > 1500000) {
-            g.gl_state = 3;    /* core senza genlock: si toglie la richiesta (la parola 34 sarebbe rifiutata) */
+            g.gl_state = 3;    /* core without genlock: the request is dropped (word 34 would be refused) */
           }
         }
       }
@@ -723,7 +723,7 @@ static void *guard_thread(void *arg) {
 static void guard_start(void) {
   if ((!guard_on && !genlock_req) || g.th_ok)
     return;
-  if (rt.on) tr_begin(); else tr_on = false;      /* -stats: la traccia, col genlock o con la guardia */
+  if (rt.on) tr_begin(); else tr_on = false;      /* -stats: the trace, with the genlock or with the guard */
   mg_core_info ci;
   mg_core_get_info(&ci);
   pthread_mutex_lock(&g.mx);
@@ -735,8 +735,8 @@ static void guard_start(void) {
   g.ex = g.ey = 0;
   g.mad = 0;
   g.arrivals = 0;
-  if (g.D < G_D_MIN_US) g.D = G_D0_US;   /* resta tra uno stream e l'altro */
-  if (!genlock_req && g.D > G_D_MAX_US) g.D = G_D_MAX_US;   /* dopo un genlock: la guardia vuole D < un quadro */
+  if (g.D < G_D_MIN_US) g.D = G_D0_US;   /* kept from one stream to the next */
+  if (!genlock_req && g.D > G_D_MAX_US) g.D = G_D_MAX_US;   /* after a genlock: the guard wants D < one frame */
   g.mode = 0;
   g.good_run = 0;
   g.npend = 0;
@@ -783,40 +783,40 @@ static int dcmp(const void *a, const void *b) {
   return x < y ? -1 : x > y;
 }
 
-/* (sotto g.mx) un'immagine scritta: v = l'arrivo nominale (0 se non noto) */
+/* (under g.mx) a picture written: v = the nominal arrival (0 if unknown) */
 static void lat_written(double v) {
   if (g.lq_wn == G_LQ) { g.lq_wh = (g.lq_wh + 1) % G_LQ; g.lq_wn--; }
   g.lq_w[(g.lq_wh + g.lq_wn++) % G_LQ] = v;
 }
 
-/* (sotto g.mx, filo della griglia) uno stato del core letto all'inizio del quadro s */
+/* (under g.mx, grid thread) a core status read at the start of frame s */
 static void lat_track(const struct h264ring_status *st, double s) {
   uint32_t oe = (uint32_t)(st->w[23] >> 32);
   uint32_t pk = (uint32_t)H264RING_ST(st, DISP_PICK), sk = (uint32_t)H264RING_ST(st, DISP_SKIP);
   if (!g.lq_have) { g.lq_have = true; g.lq_oe = oe; g.lq_pk = pk; g.lq_sk = sk; return; }
   uint32_t de = oe - g.lq_oe, dp = pk - g.lq_pk, ds = sk - g.lq_sk;
   g.lq_oe = oe; g.lq_pk = pk; g.lq_sk = sk;
-  if (de > 8 || dp > 8 || ds > 8) {          /* fuori sincronia (non dovrebbe): da capo */
+  if (de > 8 || dp > 8 || ds > 8) {          /* out of step (should not happen): start over */
     g.lq_wn = g.lq_en = 0; g.lq_resync++;
     return;
   }
-  /* l'istante dell'ultima emissione: tm_emit (27 MHz) rispetto a tm_now (27 MHz >> 10) */
+  /* the last emission's instant: tm_emit (27 MHz) against tm_now (27 MHz >> 10) */
   int64_t dt = (int64_t)(int32_t)((uint32_t)(st->w[85] >> 32) - (uint32_t)((st->w[31] >> 42) << 10));
   double t_emit = s + dt / 27.0;
   for (uint32_t j = 0; j < de; j++) {
-    if (!g.lq_wn) break;                     /* scritta prima che si cominciasse a contare */
+    if (!g.lq_wn) break;                     /* written before the counting started */
     double v = g.lq_w[g.lq_wh];
     g.lq_wh = (g.lq_wh + 1) % G_LQ; g.lq_wn--;
     if (g.lq_en == G_LQ) { g.lq_eh = (g.lq_eh + 1) % G_LQ; g.lq_en--; }
     g.lq_e[(g.lq_eh + g.lq_en++) % G_LQ] = v;
-    if (de == 1 && v > 0) {                  /* l'istante è di questa sola */
+    if (de == 1 && v > 0) {                  /* the instant is this one's alone */
       g.lx[g.lx_i] = t_emit - v;
       g.lx_i = (g.lx_i + 1) % G_LX;
       if (g.lx_n < G_LX) g.lx_n++;
     }
   }
   for (uint32_t j = 0; j < ds && g.lq_en; j++) { g.lq_eh = (g.lq_eh + 1) % G_LQ; g.lq_en--; }
-  double ev = s - g.Pm + g.eoff;             /* la presa appena passata */
+  double ev = s - g.Pm + g.eoff;             /* the pickup just passed */
   for (uint32_t j = 0; j < dp && g.lq_en; j++) {
     double v = g.lq_e[g.lq_eh];
     g.lq_eh = (g.lq_eh + 1) % G_LQ; g.lq_en--;
@@ -826,14 +826,14 @@ static void lat_track(const struct h264ring_status *st, double s) {
       if (g.ll_n < G_LL) g.ll_n++;
     }
   }
-  /* un'immagine scritta e mai emessa (un errore del decodificatore) sposterebbe tutte le coppie di
-   * una: se in 2 s la coda delle scritte non torna mai vuota, la più vecchia si toglie */
+  /* a picture written and never emitted (a decoder error) would shift every pair by one: if the
+   * written queue never gets empty in 2 s, the oldest is removed */
   if (g.lq_wn < g.lq_wmin) g.lq_wmin = g.lq_wn;
   if (++g.lq_wmin_n >= 120) {
     if (g.lq_wmin >= 1 && g.lq_wn) { g.lq_wh = (g.lq_wh + 1) % G_LQ; g.lq_wn--; g.lq_resync++; }
     g.lq_wmin = 99; g.lq_wmin_n = 0;
   }
-  /* le statistiche, ogni 30 quadri */
+  /* the statistics, every 30 frames */
   if (g.lq_wmin_n % 30 == 0 && g.lx_n >= 600 && g.ll_n == G_LL) {
     static double tmp[G_LX];
     memcpy(tmp, g.lx, g.lx_n * sizeof(double));
@@ -845,8 +845,8 @@ static void lat_track(const struct h264ring_status *st, double s) {
     qsort(tl, G_LL, sizeof(double), dcmp);
     g.lL = tl[G_LL / 2];
     g.lstat = g.lL > 0 && g.lL < 100000;
-    /* la latenza media da agganciato, senza gli ultimi 2 s (alla chiusura dello stream le ultime
-     * immagini escono tardi: a fine stream la mediana dava 54-56 ms invece di 20) */
+    /* the mean latency while locked, without the last 2 s (as the stream closes the last pictures
+     * come out late: at the stream's end the median gave 54-56 ms instead of 20) */
     if (g.lstat && g.gl_locked) {
       if (g.lr_n == 4) { g.lsum += g.lr[g.lr_i]; g.lcnt++; } else g.lr_n++;
       g.lr[g.lr_i] = g.lL;
@@ -863,14 +863,14 @@ static void guard_stop(void) {
   g.th_ok = false;
   tr_end();
   if (g.gl_state == 2 && g.lcnt)
-    printf("[genlock] a fine stream: latenza media %.1f ms dall'arrivo allo schermo, da agganciato (%.0f s; pronta dopo l'arrivo: mediana %.1f ms)%s\n",
+    printf("[genlock] at stream end: mean latency %.1f ms from arrival to screen, while locked (%.0f s; ready after arrival: median %.1f ms)%s\n",
            g.lsum / g.lcnt / 1000, g.lcnt * 0.5, g.lx50 / 1000, g.lag_ctl ? ", genlock +1" : "");
   if (g.gl_state == 2)
-    printf("[genlock] a fine stream: frequenza del PC %s %+.2f us a quadro (%.4f Hz), fase a %.2f ms dalla retta%s\n",
-           g.fe_valid ? "misurata" : "stimata", g.fe_valid ? g.fe_F : g.gl_integ, 1e6 / (16666.667 + (g.fe_valid ? g.fe_F : g.gl_integ)),
-           g.fe_sd / 1000, g.fe_rejected ? ", con misure scartate" : "");
+    printf("[genlock] at stream end: PC rate %s %+.2f us a frame (%.4f Hz), phase %.2f ms off the line%s\n",
+           g.fe_valid ? "measured" : "estimated", g.fe_valid ? g.fe_F : g.gl_integ, 1e6 / (16666.667 + (g.fe_valid ? g.fe_F : g.gl_integ)),
+           g.fe_sd / 1000, g.fe_rejected ? ", with measurements rejected" : "");
   if (g.gl_state) {
-    /* fuori dallo stream il raster torna a 60,000 Hz esatti */
+    /* outside the stream the raster goes back to exactly 60.000 Hz */
     pthread_mutex_lock(&ring_mx);
     if (ring) { h264ring_set_genlock(ring, 0, 0); h264ring_set_gl_lag(ring, 0); }
     pthread_mutex_unlock(&ring_mx);
@@ -879,7 +879,7 @@ static void guard_stop(void) {
   }
 }
 
-/* Prima di scrivere un'immagine: trattenerla fino alla prossima presa se cade dopo il taglio */
+/* Before writing a picture: hold it until the next pickup if it lands after the cut */
 static void guard_wait(bool idr, uint64_t *held_us, PDECODE_UNIT du) {
   uint32_t rtp = du->rtpTimestamp;
   *held_us = 0;
@@ -893,10 +893,10 @@ static void guard_wait(bool idr, uint64_t *held_us, PDECODE_UNIT du) {
     return;
   }
   double P = g.P;
-  double e0 = g.t_ref + g.eoff;              /* una valutazione */
-  double a = g_wrap(w - e0, P);              /* da quanto è passata l'ultima valutazione */
+  double e0 = g.t_ref + g.eoff;              /* an evaluation */
+  double a = g_wrap(w - e0, P);              /* how long since the last evaluation */
   double e_next = w - a + P;
-  /* la fase media e la dispersione degli arrivi */
+  /* the arrivals' mean phase and spread */
   double ang = 2 * M_PI * a / P;
   double al = g.arrivals < 64 ? 1.0 / (g.arrivals + 1) : 1.0 / 64;
   g.ex += (cos(ang) - g.ex) * al;
@@ -904,26 +904,27 @@ static void guard_wait(bool idr, uint64_t *held_us, PDECODE_UNIT du) {
   double phi = g_wrap(atan2(g.ey, g.ex) * P / (2 * M_PI), P);
   g.mad += (g_cdist(a, phi, P) - g.mad) * al;
   g.arrivals++;
-  /* il genlock: si porta la presa a cadere subito dopo che l'immagine è pronta, muovendo la frequenza
-   * del PLL video del core (GL_TRIM, 2^-16 = 0,25 us a quadro; il core ci scivola, 25 unità al
-   * secondo, senza salti di riga). Stima della frequenza del PC, poi anello di fase sul ritmo del PC
-   * (qui sotto). */
+  /* the genlock: the pickup is brought to land right after the picture is ready, by moving the rate
+   * of the core's video PLL (GL_TRIM, 2^-16 = 0.25 us a frame; the core glides there, 25 units a
+   * second, without line jumps). An estimate of the PC's rate, then a phase loop on the PC's
+   * rhythm (below). */
   int gl_send = -1000;
   if (g.gl_state == 3) {
     g.gl_state = 0;
-    gl_send = 1001;                          /* togliere la richiesta */
+    gl_send = 1001;                          /* drop the request */
     if (!gl_problem[0])
-      snprintf(gl_problem, sizeof(gl_problem), "il core caricato non ha il genlock");
-    printf("[genlock] %s: %s\n", gl_problem, guard_on ? "resta la guardia" : "nessuna sincronizzazione");
+      snprintf(gl_problem, sizeof(gl_problem), "the loaded core has no genlock");
+    printf("[genlock] %s: %s\n", gl_problem, guard_on ? "the guard stays" : "no sync");
   }
-  /* IL RITMO DEL PC, NON GLI ARRIVI. Gli arrivi si spostano con la dimensione delle immagini e col
-   * Wi-Fi (uno scorrimento veloce: immagini grandi, arrivi in ritardo di vari ms): inseguirli muove
-   * la frequenza del core (sul MiSTer: da 59,94 a 60,07 e 59,88 a ogni scorrimento). Il genlock segue
-   * invece il timestamp RTP di ogni immagine (l'orologio del PC, 90 kHz): v = rtp + il ritardo di base
-   * (il 3 % dei ritardi degli ultimi 20 s, che segue anche la deriva tra i due orologi) è l'arrivo che
-   * l'immagine avrebbe senza code né dimensione. Il margine è il 97 % dei ritardi meno la base, e
-   * misura solo dopo la raffica d'avvio (dalla stima della frequenza); in aggancio segue subito, da
-   * agganciato cambia al massimo di 0,15 ms al secondo (la fase ne segue 0,18). */
+  /* THE PC'S RHYTHM, NOT THE ARRIVALS. The arrivals move with the pictures' size and with the
+   * Wi-Fi (a fast scroll: large pictures, arrivals late by several ms): chasing them moves the
+   * core's rate (on the MiSTer: from 59.94 to 60.07 and 59.88 at every scroll). The genlock follows
+   * instead each picture's RTP timestamp (the PC's clock, 90 kHz): v = rtp + the base delay (the
+   * 3rd percentile of the last 20 s's delays, which also follows the drift between the two clocks)
+   * is the arrival the picture would have without queues or size. The margin is the 97th
+   * percentile of the delays minus the base, and it measures only after the startup burst (from
+   * the rate estimate); while locking it follows at once, once locked it changes by at most
+   * 0.15 ms a second (the phase follows 0.18). */
   double phv = 0, v_abs = 0;
   bool have_v = false;
   if (g.gl_state == 2) {
@@ -934,17 +935,17 @@ static void guard_wait(bool idr, uint64_t *held_us, PDECODE_UNIT du) {
     double d = w - rtp_us;
     double dt_q = g.dmin_t ? (w - g.dmin_t) / 1e6 : 0;
     g.dmin_t = w;
-    /* un salto del timestamp (l'inizio dello stream, la rete appena pronta): si ricomincia */
+    /* a timestamp jump (the stream's start, the network just ready): start over */
     if (!g.d_have || fabs(d - (g.d_ref + g.dmin)) > 500000) {
-      if (g.d_have) printf("[genlock] salto di %.0f ms tra timestamp e arrivi: si ricomincia la misura\n",
+      if (g.d_have) printf("[genlock] jump of %.0f ms between timestamps and arrivals: the measurement restarts\n",
                            (d - (g.d_ref + g.dmin)) / 1000);
       g.d_have = true; g.d_ref = d; g.dmin = 0; g.xh_i = g.xh_n = g.xh_cnt = 0; g.q_init = false;
       g.fe_have = false; g.fe_n = g.fe_i = g.fe_cnt = 0;
     }
-    /* nei ritardi, solo le immagini a un quadro dalla precedente (timestamp RTP): sul desktop fermo
-     * Sunshine manda immagini solo quando lo schermo cambia, e quella dopo una pausa arriva con un
-     * ritardo che non è della rete (15/11, i primi 20 s sul desktop prima di aprire il gioco: margine
-     * 48 ms con tutte le immagini, 4-6 ms con queste) */
+    /* in the delays, only the pictures one frame after the previous (RTP timestamp): on a still desktop
+     * Sunshine sends pictures only when the screen changes, and the one after a pause arrives with a
+     * delay that is not the network's (15/11, the first 20 s on the desktop before opening the game:
+     * margin 48 ms with every picture, 4-6 ms with these) */
     bool reg_step = g.rtp_prev_have && fabs(rtp_us - g.rtp_prev_us - P) < 0.25 * P;
     g.rtp_prev_us = rtp_us;
     g.rtp_prev_have = true;
@@ -954,51 +955,51 @@ static void guard_wait(bool idr, uint64_t *held_us, PDECODE_UNIT du) {
       if (g.xh_n < G_XH) g.xh_n++;
     }
     if (++g.xh_cnt >= 30 && g.xh_n >= 60) {
-      /* ogni mezzo secondo, sui ritardi delle ultime 1200 immagini (20 s): la base è il 3 % (non il
-       * minimo: un solo timestamp anomalo la falserebbe per minuti -- sul MiSTer, appena acceso, un
-       * margine di 48 ms), il margine il 97 % meno la base (il 99,5 %, provato, allargava il margine
-       * fino a quasi un quadro col Wi-Fi peggiore e faceva scontrare le immagini) */
+      /* every half second, on the delays of the last 1200 pictures (20 s): the base is the 3rd
+       * percentile (not the minimum: a single odd timestamp would skew it for minutes -- on the
+       * MiSTer, just switched on, a 48 ms margin), the margin the 97th minus the base (the 99.5th,
+       * tried, widened the margin to almost a frame with the worst Wi-Fi and made pictures collide) */
       static float tmp[G_XH];
       memcpy(tmp, g.xh, sizeof(float) * g.xh_n);
       qsort(tmp, g.xh_n, sizeof(float), g_fcmp);
       g.dmin = tmp[(unsigned)(g.xh_n * 0.03)];
       g.q_tgt = tmp[(unsigned)(g.xh_n * 0.97)] - g.dmin;
-      /* al più mezzo quadro: arrivi sparsi su più di tanto non li sistema nessuna fase, e un margine
-       * più grande di un quadro fa solo girare l'obiettivo (che è modulo un quadro) */
+      /* at most half a frame: arrivals spread over more than that cannot be fixed by any phase, and a
+       * margin larger than a frame only makes the target spin (it is modulo a frame) */
       if (g.q_tgt > G_Q_MAX_US) g.q_tgt = G_Q_MAX_US;
       g.xh_cnt = 0;
       if (!g.q_init) { g.q = g.q_tgt; g.q_init = true; }
-      /* agganciato, il margine scende di 0,15 ms al secondo; se l'obiettivo è molto più basso (i
-       * ritardi irregolari dell'avvio usciti dalla finestra di 20 s) si salta lì e si riaggancia: la
-       * prima sessione dopo l'avvio di Sunshine del 15/11 (il PC a 36-57 fps per 30 s) aveva un margine
-       * di 48 ms sceso in minuti, e l'obiettivo, girando, passava per la presa: 75-86 immagini
-       * scartate ogni 10 s col PC già regolare */
+      /* once locked the margin falls by 0.15 ms a second; if the target is far lower (the startup's
+       * irregular delays out of the 20 s window) it jumps there and re-locks: the first session after
+       * Sunshine's start on 15/11 (the PC at 36-57 fps for 30 s) had a 48 ms margin that fell over
+       * minutes, and the target, spinning, crossed the pickup: 75-86 pictures dropped every 10 s with
+       * the PC already regular */
       if (g.gl_locked && g.q - g.q_tgt > 2000) {
-        printf("[genlock] margine sceso da %.1f a %.1f ms: si riaggancia\n", g.q / 1000, g.q_tgt / 1000);
+        printf("[genlock] margin down from %.1f to %.1f ms: re-locking\n", g.q / 1000, g.q_tgt / 1000);
         g.q = g.q_tgt;
         g.gl_locked = false; g.gl_good = 0; g.gl_bad_t0 = 0; g.gl_eema = 5000;
       }
     }
     if (!g.gl_locked) {
-      double qs = 1000.0 * dt_q;           /* in aggancio il margine segue svelto, 1 ms al secondo */
+      double qs = 1000.0 * dt_q;           /* while locking the margin follows quickly, 1 ms a second */
       if (g.q < g.q_tgt) g.q = fmin(g.q_tgt, g.q + qs); else g.q = fmax(g.q_tgt, g.q - qs);
     } else {
-      double qs = 150.0 * dt_q;            /* agganciata: sotto i 0,18 ms al secondo che la fase può seguire */
+      double qs = 150.0 * dt_q;            /* locked: below the 0.18 ms a second the phase can follow */
       if (g.q < g.q_tgt) g.q = fmin(g.q_tgt, g.q + qs); else g.q = fmax(g.q_tgt, g.q - qs);
     }
     v_abs = rtp_us + g.d_ref + g.dmin;
     phv = g_wrap(v_abs - e0, P);
     have_v = g.q_init;
-    /* LA FREQUENZA DEL PC, MISURATA DI CONTINUO. La fase del timestamp RTP rispetto alle prese
-     * (senza la base dmin, che salta a ogni aggiornamento) cambia di (periodo del PC - periodo del
-     * core) a quadro; il periodo del core è quello nominale più il trim applicato (che il core
-     * raggiunge scivolando, 25 unità al secondo: lo si simula). Y = la fase srotolata + l'integrale
-     * del trim applicato ha quindi pendenza (periodo del PC - nominale), qualunque cosa faccia
-     * l'anello: è la parte di frequenza del genlock, misurata invece che integrata dall'errore di
-     * fase. L'integrale di prima, a ogni giro di fase (sulla traccia del 15/11 a 5000 kbps: la fase
-     * scivolava di un quadro ogni 25-30 s, raffiche di 40-80 ripetute), cambiava segno e si caricava
-     * nel verso sbagliato: stimava il PC 29,7 us a quadro più lento, era 15,8. Sulle tracce del 15/11
-     * la pendenza su 30 s dà 15,8-16,1 us a quadro +-0,2 (su 10 s +-1, su 4 s +-3,5). */
+    /* THE PC'S RATE, MEASURED CONTINUOUSLY. The RTP timestamp's phase against the pickups (without
+     * the dmin base, which jumps at each update) changes by (the PC's period - the core's period)
+     * a frame; the core's period is the nominal one plus the applied trim (which the core reaches
+     * by gliding, 25 units a second: it is simulated). Y = the unwrapped phase + the integral of
+     * the applied trim therefore has slope (the PC's period - nominal), whatever the loop does: it
+     * is the genlock's rate part, measured instead of integrated from the phase error. The former
+     * integral, at every phase wrap (on the 5000 kbps trace of 15/11: the phase slipped a frame
+     * every 25-30 s, bursts of 40-80 repeats), changed sign and charged the wrong way: it put the
+     * PC 29.7 us a frame slower, it was 15.8. On the traces of 15/11 the slope over 30 s gives
+     * 15.8-16.1 us a frame +-0.2 (over 10 s +-1, over 4 s +-3.5). */
     if (g.fll_done) {
       double ph = g_wrap(rtp_us + g.d_ref - e0, P);
       if (!g.fe_have) {
@@ -1028,25 +1029,25 @@ static void guard_wait(bool idr, uint64_t *held_us, PDECODE_UNIT du) {
         }
         double den = n * sxx - sx * sx;
         if (den > 0 && xmax - xmin >= G_FE_MIN_S) {
-          double slope = (n * sxy - sx * sy) / den;            /* us di fase al secondo */
-          double F = slope * P / 1e6;                          /* us a quadro */
+          double slope = (n * sxy - sx * sy) / den;            /* us of phase a second */
+          double F = slope * P / 1e6;                          /* us a frame */
           double resid = 0, b = (sy - slope * sx) / n;
           for (unsigned i = 0; i < g.fe_n; i++) { double r = g.fe_y[i] - (b + slope * g.fe_x[i]); resid += r * r; }
           g.fe_sd = sqrt(resid / n);
-          /* una misura buona: la fase sta sulla retta (sulle tracce del 15/11, scarto 0,5-0,7 ms a
-           * regime, sotto 1 ms da 10 s dall'avvio) e la frequenza è nel campo del PLL (+-127 unità,
-           * 32 us a quadro). Se no la si scarta e resta quella di prima: due sessioni del 15/11 sera
-           * (senza traccia) avevano misurato -373 e -32 us a quadro, col PC a +13 */
+          /* a good measurement: the phase lies on the line (on the traces of 15/11, rms 0.5-0.7 ms in
+           * steady state, under 1 ms from 10 s after the start) and the rate is within the PLL's range
+           * (+-127 units, 32 us a frame). Otherwise it is rejected and the previous one stays: two
+           * sessions on the evening of 15/11 (no trace) had measured -373 and -32 us a frame, with the PC at +13 */
           if (fabs(F) > G_FE_MAX_US || g.fe_sd > G_FE_MAX_SD_US) {
             if (!g.fe_rejected++)
-              printf("[genlock] misura della frequenza scartata: %+.1f us a quadro, la fase a %.1f ms dalla retta\n",
+              printf("[genlock] rate measurement rejected: %+.1f us a frame, the phase %.1f ms off the line\n",
                      F, g.fe_sd / 1000);
           } else {
             if (!g.fe_valid)
-              printf("[genlock] frequenza del PC misurata su %.0f s: %+.2f us a quadro (%.4f Hz; la stima d'avvio era %+.1f)\n",
+              printf("[genlock] PC rate measured over %.0f s: %+.2f us a frame (%.4f Hz; the startup estimate was %+.1f)\n",
                      xmax - xmin, F, 1e6 / (P + F), g.gl_integ);
             else if (fabs(F - g.fe_logged) > 3)
-              printf("[genlock] frequenza del PC ora %+.2f us a quadro (%.4f Hz)\n", F, 1e6 / (P + F));
+              printf("[genlock] PC rate now %+.2f us a frame (%.4f Hz)\n", F, 1e6 / (P + F));
             if (!g.fe_valid || fabs(F - g.fe_logged) > 3) g.fe_logged = F;
             g.fe_F = F;
             g.fe_valid = true;
@@ -1055,9 +1056,9 @@ static void guard_wait(bool idr, uint64_t *held_us, PDECODE_UNIT du) {
       }
     }
   }
-  /* prima la frequenza (FLL): con il core al nominale, la pendenza della fase di v dice di quanto il
-   * PC è più lento o più veloce (us a quadro); 4 s, dopo la raffica d'avvio di Sunshine (arrivi sparsi
-   * sotto 1,5 ms; sopra 2,5 ms si ricomincia; dopo 15 s si parte da 0). Va nell'integrale. */
+  /* first the rate (FLL): with the core at nominal, the slope of v's phase tells how much slower or
+   * faster the PC is (us a frame); 4 s, after Sunshine's startup burst (arrivals spread under
+   * 1.5 ms; over 2.5 ms it starts over; after 15 s it starts from 0). It goes into the integral. */
   if (g.gl_state == 2 && have_v && !g.fll_done) {
     if (!g.fll_start) g.fll_start = w;
     if (g.fll_n || g.fll_t0) g.fll_phu += g_wrap(phv - g.fll_prev + P / 2, P) - P / 2;
@@ -1070,65 +1071,64 @@ static void guard_wait(bool idr, uint64_t *held_us, PDECODE_UNIT du) {
       g.fll_n++; g.fll_sx += xs; g.fll_sy += g.fll_phu; g.fll_sxx += xs * xs; g.fll_sxy += xs * g.fll_phu;
       if (xs > 4.0 && g.fll_n > 150) {
         double n = g.fll_n, den = n * g.fll_sxx - g.fll_sx * g.fll_sx;
-        double slope = den > 0 ? (n * g.fll_sxy - g.fll_sx * g.fll_sy) / den : 0;   /* us di fase al secondo */
-        g.gl_integ = slope * P / 1e6;                                               /* us a quadro */
+        double slope = den > 0 ? (n * g.fll_sxy - g.fll_sx * g.fll_sy) / den : 0;   /* us of phase a second */
+        g.gl_integ = slope * P / 1e6;                                               /* us a frame */
         if (g.gl_integ > 30) g.gl_integ = 30;
         if (g.gl_integ < -30) g.gl_integ = -30;
         g.fll_done = true;
-        printf("[genlock] frequenza del PC: %+.1f us a quadro rispetto al core (%.4f Hz), misurata in %.1f s\n",
+        printf("[genlock] PC rate: %+.1f us a frame against the core (%.4f Hz), measured in %.1f s\n",
                g.gl_integ, 1e6 / (P + g.gl_integ), (w - g.fll_start) / 1e6);
-        /* i ritardi della raffica d'avvio non contano per il margine (sul MiSTer: 50 ms, scesi di
-         * 0,15 ms al secondo, con un'immagine su cinque persa per minuti): si ricomincia da qui */
+        /* the startup burst's delays do not count for the margin (on the MiSTer: 50 ms, falling by
+         * 0.15 ms a second, with one picture in five lost for minutes): start over from here */
         g.xh_i = g.xh_n = g.xh_cnt = 0;
         g.q_init = false;
       }
     }
     if (!g.fll_done && w - g.fll_start > 15e6) {
       g.fll_done = true;
-      printf("[genlock] frequenza del PC non misurata (arrivi irregolari per 15 s): si parte da 0\n");
-      g.xh_i = g.xh_n = g.xh_cnt = 0;          /* anche qui i ritardi dell'avvio non contano */
+      printf("[genlock] PC rate not measured (irregular arrivals for 15 s): starting from 0\n");
+      g.xh_i = g.xh_n = g.xh_cnt = 0;          /* here too the startup's delays do not count */
       g.q_init = false;
     }
   } else if (g.gl_state == 2 && have_v) {
-    /* poi la fase: obiettivo P - D - margine - 0,5 ms (un quadro dopo se non ci sta). AGGANCIO: la
-     * frequenza si muove quanto serve (e/150, integrale 8e-6). AGGANCIATO (errore sotto 0,8 ms per
-     * 3 s): la correzione di fase è limitata a +-3 us a quadro (+-0,018 % attorno alla frequenza del
-     * PC) e l'integrale è lento (1e-6): il core resta alla frequenza del PC anche quando il margine o
-     * la decodifica cambiano; la fase ci arriva piano. Errore oltre 5 ms per 10 s: si riaggancia. */
+    /* then the phase: target P - D - margin - 0.5 ms (a frame later if it does not fit). LOCKING: the
+     * rate moves as much as needed (e/150, integral 8e-6). LOCKED (error under 0.8 ms for 3 s): the
+     * phase correction is limited to +-3 us a frame (+-0.018 % around the PC's rate) and the
+     * integral is slow (1e-6): the core stays at the PC's rate even when the margin or the decoding
+     * change; the phase gets there slowly. Error over 5 ms for 10 s: re-lock. */
     double tg = P - g.D - g.q - 500;
     if (tg < 300) tg += P;
     tg = g_wrap(tg, P);
     double e = g_wrap(phv - tg + P / 2, P) - P / 2;
-    /* GENLOCK +1: l'obiettivo è la latenza vera L (presa - arrivo nominale, misurata immagine per
-     * immagine), non la fase: con la riserva il core tiene un'immagine in più dopo la raffica d'avvio
-     * o un'immagine in ritardo, e la fase da sola restava un quadro sopra (36 ms sulla traccia del
-     * 15/11). L'obiettivo: la decodifica tipica (mediana, rete compresa) più un quadro e 1 ms: la
-     * riserva per le immagini tipiche, ogni immagine ha fino a un quadro in più del solito (la più
-     * lenta, 99,9 %, sulle tracce resta 8-10 ms sotto; il 99,9 % non entra nell'obiettivo: per un
-     * minuto conta ancora la raffica d'avvio, 50-60 ms). Sulle tracce del 15/11: 29,9 ms a 10000
-     * kbps, 26,2 a 5000. Un
-     * errore è L - obiettivo, non avvolto: un quadro di troppo si toglie scorrendo la fase (il core un
-     * po' più veloce per qualche secondo), senza scartare immagini */
+    /* GENLOCK +1: the target is the true latency L (pickup - nominal arrival, measured picture by
+     * picture), not the phase: with the reserve the core keeps one more picture after the startup
+     * burst or a late picture, and the phase alone stayed a frame above (36 ms on the trace of
+     * 15/11). The target: the typical decoding (median, network included) plus one frame and 1 ms:
+     * the reserve for the typical pictures, each picture has up to one frame more than usual (the
+     * slowest, 99.9 %, stays 8-10 ms below on the traces; the 99.9 % is not in the target: for a
+     * minute the startup burst, 50-60 ms, still counts). On the traces of 15/11: 29.9 ms at 10000
+     * kbps, 26.2 at 5000. The error is L - target, not wrapped: one frame too many is removed by
+     * sliding the phase (the core a little faster for a few seconds), without dropping pictures */
     if (g.gl_lag_st == 2 && g.lstat) {
       double Lt = g.lx50 + P + 1000;
       if (!g.lag_ctl)
-        printf("[genlock] +1: latenza %.1f ms, obiettivo %.1f ms (pronta dopo l'arrivo: mediana %.1f, 99,9%% %.1f ms)\n",
+        printf("[genlock] +1: latency %.1f ms, target %.1f ms (ready after arrival: median %.1f, 99.9%% %.1f ms)\n",
                g.lL / 1000, Lt / 1000, g.lx50 / 1000, g.lx999 / 1000);
       g.lag_ctl = true;
       g.lag_Lt = Lt;
       e = Lt - g.lL;
     }
     double pc = e / 150.0;
-    /* la frequenza: la misura continua appena c'è (e l'integrale non si muove più con l'errore) */
+    /* the rate: the continuous measurement as soon as it exists (and the integral no longer moves with the error) */
     if (g.fe_valid) {
       double dF = g.fe_F - g.gl_integ;
-      if (dF > 0.5) dF = 0.5;                 /* al più 0,5 us a quadro ogni immagine (all'avvio) */
+      if (dF > 0.5) dF = 0.5;                 /* at most 0.5 us a frame per picture (at the start) */
       if (dF < -0.5) dF = -0.5;
       g.gl_integ += dF;
     }
     if (g.gl_relock) {
       g.gl_relock = false;
-      g.fe_have = false;                      /* la fase delle prese salta (raster cambiato): si rimisura */
+      g.fe_have = false;                      /* the pickups' phase jumps (raster changed): measure again */
       if (g.gl_locked) { g.gl_locked = false; g.gl_good = 0; g.gl_bad_t0 = 0; g.gl_eema = 5000; }
     }
     if (g.gl_locked) {
@@ -1139,25 +1139,25 @@ static void guard_wait(bool idr, uint64_t *held_us, PDECODE_UNIT du) {
         if (!g.gl_bad_t0) g.gl_bad_t0 = w;
         else if (w - g.gl_bad_t0 > 10e6) {
           g.gl_locked = false; g.gl_good = 0; g.gl_bad_t0 = 0; g.gl_eema = 5000;
-          printf("[genlock] fase persa (errore %.1f ms per 10 s): si riaggancia\n", e / 1000);
+          printf("[genlock] phase lost (error %.1f ms for 10 s): re-locking\n", e / 1000);
         }
       } else {
         g.gl_bad_t0 = 0;
       }
     } else {
       if (!g.fe_valid) g.gl_integ += e * 8e-6;
-      /* agganciato quando l'errore MEDIO degli ultimi ~2 s è sotto 1 ms (non ogni campione sotto 0,8:
-       * col Wi-Fi a volte non succedeva mai, e l'aggancio, che muove la frequenza quanto serve,
-       * restava per tutta la sessione) */
+      /* locked when the MEAN error of the last ~2 s is under 1 ms (not every sample under 0.8: with
+       * the Wi-Fi it sometimes never happened, and the locking mode, which moves the rate as much as
+       * needed, stayed for the whole session) */
       g.gl_eema += (fabs(e) - g.gl_eema) / 120.0;
       if (++g.gl_good > 180 && g.gl_eema < 1000 + 0.1 * g.q) {
         g.gl_locked = true;
-        printf("[genlock] agganciato: core a %.4f Hz, margine %.1f ms\n", g.Pm > 0 ? 1e6 / g.Pm : 0.0, g.q / 1000);
+        printf("[genlock] locked: core at %.4f Hz, margin %.1f ms\n", g.Pm > 0 ? 1e6 / g.Pm : 0.0, g.q / 1000);
       }
     }
     if (g.gl_integ > 30) g.gl_integ = 30;
     if (g.gl_integ < -30) g.gl_integ = -30;
-    double corr = pc + g.gl_integ;            /* us a quadro */
+    double corr = pc + g.gl_integ;            /* us a frame */
     int trim = (int)lround(corr * 65536.0 / P);
     if (trim > 127) trim = 127;
     if (trim < -127) trim = -127;
@@ -1169,21 +1169,21 @@ static void guard_wait(bool idr, uint64_t *held_us, PDECODE_UNIT du) {
     g.gl_n++;
     if (trim != g.gl_trim_sent) { gl_send = trim; g.gl_trim_sent = trim; }
   }
-  /* la zona di pericolo: attorno alla scadenza (P - D: dopo, l'immagine non è pronta per la prossima
-   * presa; D varia da un'immagine all'altra, la zona è larga di conseguenza) */
+  /* the danger zone: around the deadline (P - D: after it, the picture is not ready for the next
+   * pickup; D varies from picture to picture, the zone is wide accordingly) */
   double d = P - g.D;
   double zc = d + 500;
-  double h = 3 * g.mad + G_MARGIN_US;        /* la nuvola degli arrivi, con margine */
+  double h = 3 * g.mad + G_MARGIN_US;        /* the arrivals' cloud, with a margin */
   double zw = h + 1500;
   if (g.gl_state) {
     if (g.mode) g.switches++;
-    g.mode = 0;                              /* col genlock (o mentre lo si prova) la guardia tace */
+    g.mode = 0;                              /* with the genlock (or while trying it) the guard keeps quiet */
   } else if (!guard_on) {
     g.mode = 0;
   } else if (g.arrivals > 60) {
     if (2 * h > 0.8 * P) {
       if (g.mode) g.switches++;
-      g.mode = 0;                            /* arrivi troppo sparsi: nessun taglio aiuta */
+      g.mode = 0;                            /* arrivals too spread: no cut helps */
     } else if (g.mode == 0 && g_cdist(phi, zc, P) < 0.8 * zw) {
       g.mode = 1; g.fixed_cut = g_wrap(phi - h, P); g.switches++; g.good_run = 0;
     } else if (g.mode == 1) {
@@ -1199,13 +1199,13 @@ static void guard_wait(bool idr, uint64_t *held_us, PDECODE_UNIT du) {
       }
     }
   }
-  /* modo 0 (arrivi lontani dalla scadenza): niente da fare. Modo 1: taglio appena prima della nuvola,
-   * che va tutta alla presa successiva */
+  /* mode 0 (arrivals far from the deadline): nothing to do. Mode 1: a cut just before the cloud,
+   * which goes entirely to the following pickup */
   double c = g.mode == 0 ? d : g.fixed_cut;
   g.cut = c;
-  /* la presa attesa: la prima dopo che l'immagine è pronta (a + D; col genlock D può superare un
-   * quadro: con "a < d ? e_next : e_next + P" un'immagine pronta dopo due prese contava come
-   * mancata e D saliva da sé fino al massimo) */
+  /* the expected pickup: the first after the picture is ready (a + D; with the genlock D can exceed
+   * a frame: with "a < d ? e_next : e_next + P" a picture ready after two pickups counted as missed
+   * and D rose by itself to the maximum) */
   double hold_until = 0, target = w - a + ceil((a + g.D) / P) * P;
   if (g.mode == 1) {
     if (c <= d) {
@@ -1216,14 +1216,14 @@ static void guard_wait(bool idr, uint64_t *held_us, PDECODE_UNIT du) {
       else { target = e_next + 2 * P; hold_until = e_next + P + 200; }
     }
   }
-  /* il genlock: ogni immagine ha la sua presa (quella dopo v + D + margine). Arrivata molto prima
-   * sarebbe pronta un quadro prima e si scontrerebbe con la precedente (una scartata, una ripetuta):
-   * la si trattiene, ma solo fino a 0,25 us per byte meno 1 ms PRIMA della presa precedente (un
-   * limite basso del suo tempo di decodifica), non fino a dopo quella presa: così un'immagine grande
-   * ha più di un quadro per decodificarsi. Sulla traccia del 14/11 (3 min, Wi-Fi), rigiocata con il
-   * tempo di decodifica stimato dalla traccia stessa (5 modelli): da 70-80 ripetute a 1-8, nessuno
-   * scontro; trattenere fino a dopo la presa precedente era la causa di quasi tutte (le immagini
-   * sopra 19 KB vogliono più di 15,7 ms). client/tools/genlock_replay.py */
+  /* the genlock: each picture has its pickup (the one after v + D + margin). Arriving much earlier
+   * it would be ready a frame early and collide with the previous one (one dropped, one repeated):
+   * it is held, but only until 0.25 us a byte minus 1 ms BEFORE the previous pickup (a low bound of
+   * its decode time), not until after that pickup: so a large picture has more than a frame to
+   * decode. On the trace of 14/11 (3 min, Wi-Fi), replayed with the decode time estimated from the
+   * trace itself (5 models): from 70-80 repeats to 1-8, no collision; holding until after the
+   * previous pickup caused almost all of them (pictures over 19 KB want more than 15.7 ms).
+   * client/tools/genlock_replay.py */
   if (G_GL_HOLD && g.gl_state == 2 && g.fll_done && have_v) {
     double tr = v_abs + g.D + g.q + 500;
     double ei = e0 + ceil((tr - e0) / P) * P;
@@ -1275,30 +1275,30 @@ static void guard_report(void) {
   double P = g.P;
   double phi = g_wrap(atan2(g.ey, g.ex) * P / (2 * M_PI), P);
   if (g.gl_state == 2)
-    printf("[genlock] %s: ritmo del PC a %.1f ms dalla presa (obiettivo %.1f, errore medio %.2f ms), margine %.1f ms "
-           "(arrivi sparsi %.1f ms), decodifica %.1f ms, latenza ~%.1f ms; trim %+d (%.1f us a quadro dal PC), core a %.4f Hz, %u mancate\n",
-           g.gl_locked ? "agganciato" : "aggancio", g.gl_phv / 1000, g.gl_target / 1000, g.gl_n ? g.gl_err_abs / g.gl_n / 1000 : 0.0,
+    printf("[genlock] %s: PC rhythm %.1f ms from the pickup (target %.1f, mean error %.2f ms), margin %.1f ms "
+           "(arrival spread %.1f ms), decoding %.1f ms, latency ~%.1f ms; trim %+d (%.1f us a frame from the PC), core at %.4f Hz, %u missed\n",
+           g.gl_locked ? "locked" : "locking", g.gl_phv / 1000, g.gl_target / 1000, g.gl_n ? g.gl_err_abs / g.gl_n / 1000 : 0.0,
            g.q / 1000, g.mad / 1000, g.D / 1000, (g.D + g.q + 500) / 1000,
            g.gl_trim, g.gl_integ, g.Pm > 0 ? 1e6 / g.Pm : 0.0, g.misses);
   if (g.gl_state == 2)
-    printf("[genlock] frequenza del PC: %s %+.2f us a quadro (%.4f Hz), scarto della fase sulla retta %.2f ms\n",
-           g.fe_valid ? "misurata" : "stima d'avvio (misura non ancora pronta)", g.fe_valid ? g.fe_F : g.gl_integ,
+    printf("[genlock] PC rate: %s %+.2f us a frame (%.4f Hz), phase %.2f ms off the line\n",
+           g.fe_valid ? "measured" : "startup estimate (measurement not ready yet)", g.fe_valid ? g.fe_F : g.gl_integ,
            1e6 / (P + (g.fe_valid ? g.fe_F : g.gl_integ)), g.fe_sd / 1000);
   if (g.gl_lag_st)
-    printf("[genlock] riserva (genlock +1): %s\n", g.gl_lag_st == 2 ? "applicata" : g.gl_lag_st == 3 ? "rifiutata dal core" : "chiesta, mai applicata");
+    printf("[genlock] reserve (genlock +1): %s\n", g.gl_lag_st == 2 ? "applied" : g.gl_lag_st == 3 ? "refused by the core" : "asked, never applied");
   if (g.gl_state == 2 || g.gl_pll_fail)
-    printf("[genlock] PLL video: %s%s%s, stato %u%s\n",
-           (g.w45 >> 25) & 1 ? "letto" : "NON letto (il core non lo muove)",
-           (g.w45 >> 7) & 1 ? " (valori fissi del Fitter: la lettura non ha dato niente)" : "",
-           (g.w45 >> 26) & 1 ? ", in movimento" : "", (unsigned)(g.w45 >> 27) & 15u,
-           (g.w45 >> 31) & 1 ? ", waitrequest alto" : "");
+    printf("[genlock] video PLL: %s%s%s, state %u%s\n",
+           (g.w45 >> 25) & 1 ? "read" : "NOT read (the core does not move it)",
+           (g.w45 >> 7) & 1 ? " (the Fitter's fixed values: the read gave nothing)" : "",
+           (g.w45 >> 26) & 1 ? ", moving" : "", (unsigned)(g.w45 >> 27) & 15u,
+           (g.w45 >> 31) & 1 ? ", waitrequest high" : "");
   else
-    printf("[guardia] arrivi a %.1f ms dalla presa (dispersione %.1f ms), decodifica %.1f ms, taglio a %.1f ms (%s); "
-           "%u trattenute (media %.1f ms), %u mancate, %u cambi di taglio\n",
-           phi / 1000, g.mad / 1000, g.D / 1000, g.cut / 1000, g.mode ? "attivo" : "spento (arrivi lontani)",
+    printf("[guard] arrivals %.1f ms from the pickup (spread %.1f ms), decoding %.1f ms, cut at %.1f ms (%s); "
+           "%u held (mean %.1f ms), %u missed, %u cut changes\n",
+           phi / 1000, g.mad / 1000, g.D / 1000, g.cut / 1000, g.mode ? "on" : "off (arrivals far)",
            g.held, g.held ? g.held_us_sum / 1000 / g.held : 0.0, g.misses, g.switches);
   if (g.r_min)
-    printf("[core] quadri a %.3f-%.3f Hz (al secondo, sull'orologio dell'ARM)\n", g.r_min, g.r_max);
+    printf("[core] frames at %.3f-%.3f Hz (per second, on the ARM's clock)\n", g.r_min, g.r_max);
   g.r_min = g.r_max = 0;
   g.gl_err_abs = 0;
   g.gl_n = 0;
@@ -1312,8 +1312,8 @@ void mg_core_poll(void) {
     return;
   pthread_mutex_lock(&ring_mx);
   poll_status_locked();
-  /* fuori dallo stream (menu): una sessione persa si riapre subito, se no
-   * l'overlay sparisce */
+  /* outside the stream (menu): a lost session is reopened at once, otherwise
+   * the overlay disappears */
   if (ring && !gone && !session_ok && !streaming && now_ms() - restart_ms >= RESTART_MS)
     session_start_locked();
   pthread_mutex_unlock(&ring_mx);
@@ -1329,23 +1329,23 @@ void mg_core_get_info(mg_core_info *ci) {
     memset(&st, 0, sizeof(st));
   unsigned iface = (unsigned)(st.w[1] & 0xFFFFu);
   if (iface >= 0x103u) {
-    /* il core di core/ (interfaccia 1.3+): Output Mode e 240p Playback nella parola 87.
-     * Il 240p/288p ha righe di lunghezza costante: 27 MHz / (1720 x 262) = 59,914 Hz,
-     * 27 MHz / (1728 x 312,5) = 49,993 Hz */
+    /* the core in core/ (interface 1.3+): Output Mode and 240p Playback in word 87.
+     * 240p/288p has constant-length lines: 27 MHz / (1720 x 262) = 59.914 Hz,
+     * 27 MHz / (1728 x 312.5) = 49.993 Hz */
     uint64_t w87 = st.w[87];
     unsigned std = (unsigned)(w87 >> 11) & 3u;
     bool il = (w87 >> 13) & 1u, p240 = (w87 >> 4) & 1u;
     ci->p240 = p240 && il;
     if (ci->p240)
-      ci->refresh_x100 = std == 2 ? 4999 : std == 1 ? 6000 : 5991;   /* 1: il core di core/ (60,000 Hz) */
+      ci->refresh_x100 = std == 2 ? 4999 : std == 1 ? 6000 : 5991;   /* 1: the core in core/ (60.000 Hz) */
     else
       ci->refresh_x100 = std == 2 ? 5000 : std == 1 ? 6000 : 5994;
     ci->interlaced = il && !ci->p240;
   } else {
     unsigned refresh = (unsigned)H264RING_ST(&st, OSD_REFRESH);
     unsigned std = (unsigned)H264RING_ST(&st, RASTER_STD);
-    /* Refresh Rate: 0 Auto (segue il ritmo dello stream: chiedendo 59.94 a Sunshine
-     * resta 59.94), 1 59.94, 2 60, 3 50 */
+    /* Refresh Rate: 0 Auto (follows the stream's rhythm: asking Sunshine for 59.94
+     * it stays 59.94), 1 59.94, 2 60, 3 50 */
     if (refresh == 3 || (refresh == 0 && std == 2))
       ci->refresh_x100 = 5000;
     else if (refresh == 2)
@@ -1366,10 +1366,10 @@ void mg_core_get_info(mg_core_info *ci) {
 
 /* ---------- overlay ---------- */
 
-static bool fb_mapped; /* da h264ring_fb_map (non un framebuffer dei test) */
+static bool fb_mapped; /* from h264ring_fb_map (not a test framebuffer) */
 
 static void overlay_layout(void) {
-  ovl_max_w = 720;       /* il raster più largo: 720 (core originale); 640 quello di core/ */
+  ovl_max_w = 720;       /* the widest raster: 720 (original core); 640 the one in core/ */
   ovl_w = 720;
   ovl_h = OVL_MAX_H;
   static const struct { unsigned fmt, bpp, pages; } tries[] = {
@@ -1388,21 +1388,21 @@ static void overlay_layout(void) {
     }
   }
   if (!fb_ok) {
-    printf("[core] framebuffer troppo piccolo (%u byte): niente menu a schermo\n", (unsigned)fb.len);
+    printf("[core] framebuffer too small (%u bytes): no on-screen menu\n", (unsigned)fb.len);
     if (fb_mapped)
       h264ring_fb_unmap(&fb);
     fb_mapped = false;
     return;
   }
   memset(fb.virt, 0, (size_t)ovl_page_bytes * ovl_pages);
-  printf("[core] overlay fino a %dx%d, %u byte per pixel, %u pagine (framebuffer %u byte)\n", ovl_max_w, ovl_h, ovl_bpp,
+  printf("[core] overlay up to %dx%d, %u bytes per pixel, %u pages (framebuffer %u bytes)\n", ovl_max_w, ovl_h, ovl_bpp,
          ovl_pages, (unsigned)fb.len);
 }
 
 static void overlay_setup(void) {
   int rc = h264ring_fb_map(&fb);
   if (rc) {
-    printf("[core] framebuffer non disponibile (%s): niente menu a schermo\n", strerror(-rc));
+    printf("[core] framebuffer not available (%s): no on-screen menu\n", strerror(-rc));
     return;
   }
   fb_mapped = true;
@@ -1419,17 +1419,17 @@ void mg_core_use_fb(void *virt, uint32_t phys, uint32_t len) {
   overlay_layout();
 }
 
-/* un pixel nel formato dell'overlay (8888: byte B, G, R, A = 0xAARRGGBB; 1555: A R G B) */
+/* a pixel in the overlay's format (8888: bytes B, G, R, A = 0xAARRGGBB; 1555: A R G B) */
 static uint32_t ovl_px(uint32_t c) {
   if (ovl_bpp == 4)
     return c | 0xFF000000u;
   return 0x8000 | (((c >> 19) & 0x1F) << 10) | (((c >> 11) & 0x1F) << 5) | ((c >> 3) & 0x1F);
 }
 
-/* una riga del canvas allargata a tutto il raster (320 -> 720: x2,25, interpolata come fa il
- * core col video: sul CRT non si vedono colonne larghe 2 e 3 pixel alternate) */
+/* a canvas line widened to the whole raster (320 -> 720: x2.25, interpolated as the core does
+ * with the video: on the CRT no alternating 2- and 3-pixel wide columns are visible) */
 static void ovl_line(uint8_t *dst, const uint32_t *src, int w) {
-  if (ovl_w == 2 * w) {          /* raster di 640 (core/): x2 esatto, niente interpolazione */
+  if (ovl_w == 2 * w) {          /* 640 raster (core/): exactly x2, no interpolation */
     for (int x = 0; x < w; x++) {
       uint32_t v = ovl_px(src[x]);
       if (ovl_bpp == 4) {
@@ -1443,7 +1443,7 @@ static void ovl_line(uint8_t *dst, const uint32_t *src, int w) {
     return;
   }
   for (int x = 0; x < ovl_w; x++) {
-    int pos = (int)(((2 * x + 1) * w * 256LL) / (2 * ovl_w)) - 128; /* centro del pixel, 1/256 */
+    int pos = (int)(((2 * x + 1) * w * 256LL) / (2 * ovl_w)) - 128; /* the pixel's centre, 1/256 */
     if (pos < 0) pos = 0;
     int i = pos >> 8, f = pos & 255;
     if (i >= w - 1) { i = w - 1; f = 0; }
@@ -1468,20 +1468,20 @@ static void ovl_fill(uint8_t *dst, uint32_t c) {
   }
 }
 
-/* Il canvas (w x h) su tutto il raster: largo quanto il raster (720 pixel a 13,5 MHz, la
- * larghezza piena del CRT), righe doppie, al centro in altezza a 576 righe (sopra e sotto
- * il colore del suo angolo): non si vede niente del core sotto */
+/* The canvas (w x h) on the whole raster: as wide as the raster (720 pixels at 13.5 MHz, the
+ * CRT's full width), doubled lines, centred vertically in 576 lines (above and below the
+ * colour of its corner): nothing of the core underneath shows */
 int mg_core_overlay_present(const uint32_t *canvas, int w, int h) {
   if (!fb_ok || !ring || w < 2 || w > ovl_max_w || h * 2 > OVL_MAX_H)
     return -1;
   mg_core_info ci;
   mg_core_get_info(&ci);
-  /* largo quanto il raster del core (parola 80): 720 sul core originale, 640 su quello di core/ */
+  /* as wide as the core's raster (word 80): 720 on the original core, 640 on the one in core/ */
   ovl_w = ci.raster_w >= 2 * w && ci.raster_w <= ovl_max_w ? ci.raster_w : ovl_max_w;
   int oh = ci.raster_h > 0 && ci.raster_h <= OVL_MAX_H ? ci.raster_h : 480;
   if (h * 2 > oh)
     oh = h * 2;
-  /* la pagina da disegnare non deve essere quella che il core sta leggendo */
+  /* the page to draw must not be the one the core is reading */
   unsigned page = ovl_pages > 1 ? ovl_page ^ 1 : 0;
   if (ovl_pages > 1 && ovl_gen > 0) {
     pthread_mutex_lock(&ring_mx);
@@ -1496,7 +1496,7 @@ int mg_core_overlay_present(const uint32_t *canvas, int w, int h) {
   for (int y = 0; y < oh; y++) {
     int sy = (y - y0) >> 1;
     bool in = y >= y0 && sy < h;
-    /* due righe uguali di fila: la seconda si copia dalla prima */
+    /* two equal lines in a row: the second is copied from the first */
     if (in && ((y - y0) & 1)) {
       memcpy(base + (size_t)y * stride, line, stride);
       continue;
@@ -1522,11 +1522,11 @@ int mg_core_overlay_present(const uint32_t *canvas, int w, int h) {
   int gen = h264ring_overlay_show(ring, &o);
   pthread_mutex_unlock(&ring_mx);
   if (gen < 0) {
-    printf("[core] overlay rifiutato (%s)\n", strerror(-gen));
+    printf("[core] overlay refused (%s)\n", strerror(-gen));
     return gen;
   }
   if (!ovl_shown)
-    printf("[core] menu a schermo visibile\n");
+    printf("[core] on-screen menu visible\n");
   ovl_gen = gen;
   ovl_page = page;
   ovl_shown = true;
@@ -1544,7 +1544,7 @@ void mg_core_overlay_hide(void) {
   ovl_shown = false;
 }
 
-/* ---------- apertura ---------- */
+/* ---------- opening ---------- */
 
 int mg_core_attach(h264ring *r, void (*on_gone)(void), void (*on_refused)(const char *why)) {
   gone_cb = on_gone;
@@ -1557,11 +1557,11 @@ int mg_core_attach(h264ring *r, void (*on_gone)(void), void (*on_refused)(const 
   return rc;
 }
 
-static const char *core_rbf; /* NULL: MiSTer_moonlight/core/H264, se c'è, se no _Other/H264 */
+static const char *core_rbf; /* NULL: MiSTer_moonlight/core/H264 if present, otherwise _Other/H264 */
 void mg_core_set_rbf(const char *rbf) { core_rbf = (rbf && *rbf) ? rbf : NULL; }
 
-/* il core sta con Moonlight (MiSTer_moonlight/core): nel menu del MiSTer, da solo, darebbe uno schermo
- * nero e basta. _Other/H264 resta per chi l'ha messo lì */
+/* the core lives with Moonlight (MiSTer_moonlight/core): from the MiSTer's menu, on its own, it
+ * would only show a black screen. _Other/H264 stays for whoever put it there */
 static const char *core_default(void) {
   glob_t gb;
   bool here = glob("/media/fat/MiSTer_moonlight/core/H264_*.rbf", 0, NULL, &gb) == 0 && gb.gl_pathc > 0;
@@ -1571,18 +1571,18 @@ static const char *core_default(void) {
 
 int mg_core_open(void (*on_gone)(void), void (*on_refused)(const char *why)) {
   if (!core_rbf) core_rbf = core_default();
-  printf("[core] carico il core H264%s%s...\n", core_rbf ? " da " : "", core_rbf ? core_rbf : "");
+  printf("[core] loading the H264 core%s%s...\n", core_rbf ? " from " : "", core_rbf ? core_rbf : "");
   int rc = h264ring_launch_core(core_rbf, LAUNCH_MS);
   if (rc) {
-    printf("[core] il core H264 non parte (%s): serve %s_*.rbf sulla SD\n", strerror(-rc),
+    printf("[core] the H264 core does not start (%s): %s_*.rbf is needed on the SD\n", strerror(-rc),
            core_rbf ? core_rbf : "MiSTer_moonlight/core/H264");
     return rc;
   }
   h264ring *r;
   rc = h264ring_open_devmem(&r, 0);
   if (rc) {
-    printf("[core] collegamento al core fallito (%s)%s\n", strerror(-rc),
-           rc == -EBUSY ? ": un altro programma lo sta usando" : "");
+    printf("[core] attaching to the core failed (%s)%s\n", strerror(-rc),
+           rc == -EBUSY ? ": another program is using it" : "");
     return rc;
   }
   rc = mg_core_attach(r, on_gone, on_refused);
@@ -1595,9 +1595,9 @@ int mg_core_open(void (*on_gone)(void), void (*on_refused)(const char *why)) {
   pthread_mutex_lock(&ring_mx);
   unsigned iface = h264ring_status(ring, &st) == 0 ? (unsigned)(st.w[1] & 0xFFFFu) : 0;
   pthread_mutex_unlock(&ring_mx);
-  printf("[core] collegato (interfaccia %u.%u): quadri %.2f Hz, %s, fino a %u macroblocchi (%u al secondo)\n",
+  printf("[core] attached (interface %u.%u): frames %.2f Hz, %s, up to %u macroblocks (%u a second)\n",
          iface >> 8, iface & 0xFF, ci.refresh_x100 / 100.0,
-         ci.p240 ? "240p durante lo stream" : ci.interlaced ? "interlacciato" : "progressivo", ci.max_mbs, ci.mb_rate);
+         ci.p240 ? "240p during the stream" : ci.interlaced ? "interlaced" : "progressive", ci.max_mbs, ci.mb_rate);
   return 0;
 }
 
@@ -1657,7 +1657,7 @@ void mg_core_stream_end(void) {
   if (ring && !gone && session_ok && h264ring_flush(ring, FLUSH_MS) != 0)
     session_ok = false;
   pthread_mutex_unlock(&ring_mx);
-  mg_core_poll(); /* riapre la sessione se il flush l'ha persa */
+  mg_core_poll(); /* reopens the session if the flush lost it */
 }
 
 static int write_record(bool audio, const void *p, uint32_t len, bool idr, unsigned wait_ms) {
@@ -1692,24 +1692,24 @@ static int write_record(bool audio, const void *p, uint32_t len, bool idr, unsig
 
 static int video_setup(int videoFormat, int width, int height, int redrawRate, void *context, int drFlags) {
   if (!(videoFormat & VIDEO_FORMAT_MASK_H264)) {
-    printf("[core] il core decodifica solo H.264\n");
+    printf("[core] the core decodes only H.264\n");
     return -1;
   }
   if (!ring) {
-    printf("[core] non collegato al core\n");
+    printf("[core] not attached to the core\n");
     return -1;
   }
   mg_core_info ci;
   mg_core_get_info(&ci);
   long mbs = (long)((width + 15) / 16) * ((height + 15) / 16);
   if (mbs > (long)ci.max_mbs) {
-    printf("[core] %dx%d sono %ld macroblocchi: il core ne decodifica al massimo %u\n", width, height, mbs, ci.max_mbs);
+    printf("[core] %dx%d is %ld macroblocks: the core decodes at most %u\n", width, height, mbs, ci.max_mbs);
     return -1;
   }
   if (mbs * redrawRate > (long)ci.mb_rate * 101 / 100)
-    printf("[core] attenzione: %dx%d a %d fps supera i %u macroblocchi al secondo del core\n", width, height,
+    printf("[core] warning: %dx%d at %d fps exceeds the core's %u macroblocks a second\n", width, height,
            redrawRate, ci.mb_rate);
-  printf("[core] video %dx%d a %d fps\n", width, height, redrawRate);
+  printf("[core] video %dx%d at %d fps\n", width, height, redrawRate);
   return 0;
 }
 
@@ -1722,7 +1722,7 @@ static void video_cleanup(void) {
     struct h264ring_cavlc_stats cs;
     h264ring_rewrite_stats(ring, &cs);
     if (cs.units_rewritten)
-      printf("[core] CAVLC: %llu access unit riscritte in CABAC sull'ARM (disattiva CAVLC in Sunshine)\n",
+      printf("[core] CAVLC: %llu access units rewritten to CABAC on the ARM (turn CAVLC off in Sunshine)\n",
              (unsigned long long)cs.units_rewritten);
   }
   pthread_mutex_unlock(&ring_mx);
@@ -1768,7 +1768,7 @@ static int video_submit(PDECODE_UNIT du) {
 
   uint64_t held_us;
   bool forced = false;
-  if (guard_on || genlock_req)               /* gli arrivi servono anche al solo genlock */
+  if (guard_on || genlock_req)               /* the arrivals are needed by the genlock alone too */
     guard_wait(idr, &held_us, du);
   else
     pace_wait(&held_us, &forced);
@@ -1777,8 +1777,8 @@ static int video_submit(PDECODE_UNIT du) {
     pace_written++;
   if (rc == -EOPNOTSUPP) {
     pthread_mutex_lock(&ring_mx);
-    printf("[core] lo stream non si puo' dare al core (%s)\n", h264ring_rewrite_why(ring));
-    snprintf(refused_why, sizeof(refused_why), "Stream non adatto al core: %s", h264ring_rewrite_why(ring));
+    printf("[core] the stream cannot be given to the core (%s)\n", h264ring_rewrite_why(ring));
+    snprintf(refused_why, sizeof(refused_why), "Stream not suited to the core: %s", h264ring_rewrite_why(ring));
     cavlc_refused = true;
     pthread_mutex_unlock(&ring_mx);
     if (refused_cb)
@@ -1789,7 +1789,7 @@ static int video_submit(PDECODE_UNIT du) {
   }
   if (rc == -EBADMSG) {
     pthread_mutex_lock(&ring_mx);
-    printf("[core] access unit %lu non riscritta (%s)\n", n.au, h264ring_rewrite_why(ring));
+    printf("[core] access unit %lu not rewritten (%s)\n", n.au, h264ring_rewrite_why(ring));
     need_idr = true;
     pthread_mutex_unlock(&ring_mx);
     n.au_dropped++;
@@ -1798,7 +1798,7 @@ static int video_submit(PDECODE_UNIT du) {
   if (rc) {
     pthread_mutex_lock(&ring_mx);
     if (rc != -ENOTCONN && !gone)
-      printf("[core] access unit %lu non scritta (%s)\n", n.au, strerror(-rc));
+      printf("[core] access unit %lu not written (%s)\n", n.au, strerror(-rc));
     need_idr = true;
     poll_status_locked();
     pthread_mutex_unlock(&ring_mx);
@@ -1808,13 +1808,13 @@ static int video_submit(PDECODE_UNIT du) {
   n.au++;
   n.au_bytes += len;
 
-  ritmo_au(du, held_us, forced);
+  rhythm_au(du, held_us, forced);
   pthread_mutex_lock(&ring_mx);
   {
     struct h264ring_cavlc_stats cs;
     h264ring_rewrite_stats(ring, &cs);
     if (cs.units_rewritten && !n.au_rewritten)
-      printf("[core] lo stream e' CAVLC: riscrittura in CABAC sull'ARM (lenta: disattiva CAVLC in Sunshine)\n");
+      printf("[core] the stream is CAVLC: rewriting to CABAC on the ARM (slow: turn CAVLC off in Sunshine)\n");
     n.au_rewritten = (unsigned long)cs.units_rewritten;
   }
   poll_status_locked();
@@ -1829,18 +1829,18 @@ DECODER_RENDERER_CALLBACKS mg_video_callbacks = {
   .capabilities = 0,
 };
 
-/* ---------- audio: Opus -> PCM 48 kHz stereo al core ---------- */
+/* ---------- audio: Opus -> 48 kHz stereo PCM to the core ---------- */
 
 static int audio_init(int audioConfiguration, POPUS_MULTISTREAM_CONFIGURATION cfg, void *context, int arFlags) {
   if (cfg->sampleRate != H264RING_AUD_RATE) {
-    printf("[core] audio a %d Hz: il core suona a 48 kHz\n", cfg->sampleRate);
+    printf("[core] audio at %d Hz: the core plays at 48 kHz\n", cfg->sampleRate);
     return -1;
   }
   int err;
   opus = opus_multistream_decoder_create(cfg->sampleRate, cfg->channelCount, cfg->streams, cfg->coupledStreams,
                                          cfg->mapping, &err);
   if (!opus) {
-    printf("[core] decoder Opus: errore %d\n", err);
+    printf("[core] Opus decoder: error %d\n", err);
     return -1;
   }
   pcm_frames = cfg->samplesPerFrame > 0 ? cfg->samplesPerFrame : 960;
@@ -1860,7 +1860,7 @@ static void audio_cleanup(void) {
 }
 
 static void audio_sample(char *data, int length) {
-  /* data NULL: pacchetto perso, Opus lo maschera e la coda del core resta piena */
+  /* data NULL: a lost packet, Opus conceals it and the core's queue stays full */
   int frames = opus_multistream_decode(opus, (const unsigned char *)data, length, pcm, pcm_frames, 0);
   if (frames <= 0) {
     n.aud_dropped++;
@@ -1895,8 +1895,8 @@ AUDIO_RENDERER_CALLBACKS mg_audio_callbacks = {
 void mg_core_get_counters(mg_core_counters *c) { *c = n; }
 
 void mg_core_print_counters(void) {
-  printf("[core] %lu access unit (%lu byte, %lu riscritte da CAVLC), %lu scartate; %lu errori del decoder, "
-         "%lu IDR chiesti; %lu sessioni; audio %lu blocchi, %lu scartati, %lu prima del video, %lu mascherati\n",
+  printf("[core] %lu access units (%lu bytes, %lu rewritten from CAVLC), %lu dropped; %lu decoder errors, "
+         "%lu IDRs asked; %lu sessions; audio %lu blocks, %lu dropped, %lu before the video, %lu concealed\n",
          n.au, n.au_bytes, n.au_rewritten, n.au_dropped, n.errors_seen, n.idr_asked, n.sessions, n.aud,
          n.aud_dropped, n.aud_early, n.aud_plc);
 }

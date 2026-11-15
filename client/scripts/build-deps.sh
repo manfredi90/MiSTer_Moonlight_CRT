@@ -1,7 +1,7 @@
 #!/bin/bash
-# Cross-compila le dipendenze statiche per l'ARM del MiSTer (Cortex-A9, NEON, hard-float).
-# Uso: build-deps.sh <dir sorgenti> <prefix>
-# Se nella cartella dei sorgenti mancano, li scarica (da GitHub) e ne controlla lo SHA-256.
+# Cross-compiles the static dependencies for the MiSTer's ARM (Cortex-A9, NEON, hard-float).
+# Usage: build-deps.sh <source dir> <prefix>
+# If missing from the source folder, downloads them (from GitHub) and checks their SHA-256.
 set -euo pipefail
 mkdir -p "$1"
 SRC=$(realpath "$1"); PREFIX=$(realpath -m "$2")
@@ -67,4 +67,4 @@ if [ ! -f "$PREFIX/lib/libopus.a" ]; then
   ninja >/dev/null && ninja install >/dev/null
 fi
 
-echo "Dipendenze pronte in $PREFIX"
+echo "Dependencies ready in $PREFIX"

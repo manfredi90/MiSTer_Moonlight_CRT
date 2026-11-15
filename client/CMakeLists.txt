@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.13)
 project(mister_moonlight LANGUAGES C)
 set(CMAKE_C_STANDARD 11)
 
-# Cartella con le dipendenze statiche (vedi scripts/build-deps.sh)
+# Folder with the static dependencies (see scripts/build-deps.sh)
 set(DEPS_PREFIX "" CACHE PATH "Prefisso delle dipendenze cross-compilate")
 if(DEPS_PREFIX)
   list(APPEND CMAKE_FIND_ROOT_PATH ${DEPS_PREFIX})
@@ -27,7 +27,7 @@ target_include_directories(gamestream PUBLIC third_party/libgamestream PRIVATE c
 target_link_libraries(gamestream PUBLIC moonlight-common-c PkgConfig::DEPS OpenSSL::SSL OpenSSL::Crypto)
 target_compile_options(gamestream PRIVATE -w)
 
-# Libreria del core H264 (MIT, owenb321/MiSTer_h264_decoder hps/)
+# The H264 core's library (MIT, owenb321/MiSTer_h264_decoder hps/)
 add_library(h264ring STATIC
   third_party/h264ring/lib/h264ring.c
   third_party/h264ring/lib/h264ring_linux.c
@@ -43,17 +43,17 @@ add_executable(mister_moonlight
 target_compile_options(mister_moonlight PRIVATE -Wall -Wextra -Wno-unused-parameter -O2)
 target_link_libraries(mister_moonlight PRIVATE gamestream h264ring moonlight-common-c PkgConfig::DEPS m
   OpenSSL::SSL OpenSSL::Crypto pthread dl m)
-# libopus.a ha bisogno di libm: va dopo tutte le librerie statiche
+# libopus.a needs libm: it goes after every static library
 target_link_options(mister_moonlight PRIVATE LINKER:--start-group)
 if(MG_STATIC)
   target_link_options(mister_moonlight PRIVATE -static -s)
 endif()
 
-# Prova sul PC: il programma col core finto in memoria (tests/)
-option(MG_TESTS "Programma di prova col core finto" OFF)
+# Test on the PC: the program with the fake core in memory (tests/)
+option(MG_TESTS "Test program with the fake core" OFF)
 if(MG_TESTS)
   add_executable(test_core tests/test_core.c src/core.c src/input.c)
-  # le funzioni di moonlight-common-c sono finte, nel test: solo le intestazioni
+  # moonlight-common-c's functions are fakes in the test: only the headers
   target_include_directories(test_core PRIVATE src third_party/moonlight-common-c/src)
   target_compile_options(test_core PRIVATE -Wall -Wextra -Wno-unused-parameter -O1 -g)
   target_link_libraries(test_core PRIVATE h264ring PkgConfig::DEPS pthread m)

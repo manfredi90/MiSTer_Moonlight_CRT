@@ -1,10 +1,10 @@
 /*
- * Prova del client contro un core H264 finto in memoria (un thread che fa la parte
- * del core: nonce e indice di lettura, blocco di stato col seqlock, battito), più la
- * regione di input scritta come la scrive il core. Il core finto segue quello di
- * clients/moonlight/tests/test_mister.c di owenb321/MiSTer_h264_decoder.
+ * A test of the client against a fake H264 core in memory (a thread plays the core:
+ * nonce and read index, the status block with its seqlock, the heartbeat), plus the input
+ * region written as the core writes it. The fake core follows the one in
+ * clients/moonlight/tests/test_mister.c of owenb321/MiSTer_h264_decoder.
  *
- *   test_core STREAM.h264      una riga PASS / FAIL per controllo, alla fine "TUTTO OK"
+ *   test_core STREAM.h264      one PASS / FAIL line per check, "ALL OK" at the end
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -35,7 +35,7 @@ static int fails;
 #define CHECK(label, cond) do { int ok_ = (cond); printf("  %s %s\n", ok_ ? "PASS" : "FAIL", label); \
                                 if (!ok_) fails++; } while (0)
 
-/* ---------- chiamate verso Sunshine, registrate ---------- */
+/* ---------- calls towards Sunshine, recorded ---------- */
 enum { C_PAD, C_ARRIVE, C_KEY, C_MOVE, C_BTN, C_SCROLL, C_HSCROLL, C_HRSCROLL };
 struct call { int kind, a, b, c, d, e, f, g, h, i; };
 static struct call calls[4096];
@@ -75,7 +75,7 @@ static int find(int kind, int a, int b) {
 static int count(int kind) { int k = 0; for (int i = 0; i < ncalls; i++) k += calls[i].kind == kind; return k; }
 static int last_pad(int n) { for (int i = ncalls - 1; i >= 0; i--) if (calls[i].kind == C_PAD && calls[i].a == n) return i; return -1; }
 
-/* ---------- il core finto ---------- */
+/* ---------- the fake core ---------- */
 static uint64_t ctrl[512];
 static uint64_t *ringmem;
 static pthread_mutex_t core_mx = PTHREAD_MUTEX_INITIALIZER;
@@ -175,7 +175,7 @@ static void settle(void) {
   }
 }
 
-/* i record di una sessione: tipo e payload */
+/* a session's records: type and payload */
 struct rec_info { int type; uint32_t off, len; };
 static int parse_records(const struct sess *s, struct rec_info *out, int cap) {
   int k = 0;
@@ -186,7 +186,7 @@ static int parse_records(const struct sess *s, struct rec_info *out, int cap) {
     uint32_t len = (uint32_t)h[4] | ((uint32_t)h[5] << 8) | ((uint32_t)h[6] << 16) | ((uint32_t)h[7] << 24);
     uint32_t n = 16u + ((len + 15u) & ~15u);
     if (type == H264RING_T_PAD) {
-      p = (p + RING) & ~(size_t)(RING - 1); /* fino alla fine del ring */
+      p = (p + RING) & ~(size_t)(RING - 1); /* up to the ring's end */
       continue;
     }
     if (p + n > s->n) break;
@@ -196,14 +196,14 @@ static int parse_records(const struct sess *s, struct rec_info *out, int cap) {
   return k;
 }
 
-/* ---------- la regione di input, come la scrive il core ---------- */
+/* ---------- the input region, as the core writes it ---------- */
 static uint32_t in_seq, evc, mdx, mdy, mwh;
 static uint8_t mbtn, osd;
 static uint64_t pads[6];
 static uint16_t q[32];
 static void publish(void) {
   in_seq++;
-  ctrl[71] = 0; /* in_tail per primo: una copia a metà non torna */
+  ctrl[71] = 0; /* in_tail first: a copy taken halfway does not match */
   __sync_synchronize();
   for (int n = 0; n < 6; n++) ctrl[49 + n] = pads[n];
   ctrl[55] = mdx | ((uint64_t)mdy << 32);
@@ -262,7 +262,7 @@ static double timed_submit(size_t i) {
 
 int main(int argc, char **argv) {
   if (argc != 2) {
-    fprintf(stderr, "uso: test_core STREAM.h264\n");
+    fprintf(stderr, "usage: test_core STREAM.h264\n");
     return 2;
   }
   FILE *f = fopen(argv[1], "rb");
@@ -282,7 +282,7 @@ int main(int argc, char **argv) {
     for (uint32_t k = 0; k + 3 < au[i].len; k++)
       if (p[k] == 0 && p[k + 1] == 0 && p[k + 2] == 1 && (p[k + 3] & 0x1F) == 5) { is_idr[i] = true; break; }
   }
-  printf("test_core: %zu access unit, la prima %s IDR\n", nau, is_idr[0] ? "e'" : "non e'");
+  printf("test_core: %zu access units, the first %s IDR\n", nau, is_idr[0] ? "e'" : "not");
   g_buf = buf; g_au = au; g_idr = is_idr;
 
   ringmem = calloc(RING / 8, 8);
@@ -295,10 +295,10 @@ int main(int argc, char **argv) {
   memset(&be, 0, sizeof be);
   be.ctrl = ctrl; be.ring = ringmem; be.ring_size = RING; be.barrier = be_barrier;
   h264ring *r = NULL;
-  printf("Collegamento e menu\n");
-  CHECK("si collega al core finto", h264ring_attach(&r, &be) == 0 && r);
+  printf("Attaching and menu\n");
+  CHECK("attaches to the fake core", h264ring_attach(&r, &be) == 0 && r);
   if (!r) return 1;
-  CHECK("apre una sessione per il menu", mg_core_attach(r, on_gone, on_refused) == 0 && nsess == 1);
+  CHECK("opens a session for the menu", mg_core_attach(r, on_gone, on_refused) == 0 && nsess == 1);
 
   /* overlay */
   uint32_t fb_len = 4u << 20;
@@ -306,13 +306,13 @@ int main(int argc, char **argv) {
   mg_core_use_fb(fbmem, H264RING_FB_BYTE, fb_len);
   static uint32_t canvas[320 * 240];
   for (int i = 0; i < 320 * 240; i++) canvas[i] = (uint32_t)(i * 2654435761u) & 0xFFFFFF;
-  CHECK("mostra il menu nell'overlay", mg_core_overlay_present(canvas, 320, 240) == 0);
+  CHECK("shows the menu in the overlay", mg_core_overlay_present(canvas, 320, 240) == 0);
   uint32_t base1 = lo(H264RING_W_OVL_BASE);
-  CHECK("descrittore: acceso, tutto il raster 720x480, 8888",
+  CHECK("descriptor: on, the whole 720x480 raster, 8888",
         (lo(H264RING_W_OVL_CTL) >> H264RING_OVL_CTL_ENABLE_BIT & 1) && lo(H264RING_W_OVL_SIZE) == ((480u << 16) | 720u) &&
         ((lo(H264RING_W_OVL_CTL) >> H264RING_OVL_CTL_FMT_LSB) & 3) == H264RING_OVL_FMT_8888 && lo(H264RING_W_OVL_STRIDE) == 2880);
   {
-    /* canvas: colonne di colore uniforme a blocchi di 32 pixel */
+    /* canvas: uniform colour columns in 32-pixel blocks */
     static uint32_t bands[320 * 240];
     for (int y = 0; y < 240; y++)
       for (int x = 0; x < 320; x++) bands[y * 320 + x] = (x / 32) * 0x101010u + (y < 120 ? 0x800000u : 0);
@@ -322,24 +322,24 @@ int main(int argc, char **argv) {
     for (int y = 0; y < 480 && ok; y += 5)
       for (int x = 0; x < 720 && ok; x++) {
         int sx = x * 320 / 720;
-        if (sx % 32 < 2 || sx % 32 > 29) continue; /* vicino al confine: sfumato */
+        if (sx % 32 < 2 || sx % 32 > 29) continue; /* near the boundary: blended */
         ok = pg[y * 720 + x] == (bands[(y / 2) * 320 + sx] | 0xFF000000u);
       }
-    CHECK("il canvas copre tutta la larghezza (320 -> 720), righe doppie, opaco", ok);
-    CHECK("bordi: prima e ultima colonna sono quelle del canvas",
+    CHECK("the canvas covers the whole width (320 -> 720), doubled lines, opaque", ok);
+    CHECK("edges: the first and last columns are the canvas's",
           pg[0] == (bands[0] | 0xFF000000u) && pg[719] == (bands[319] | 0xFF000000u) &&
           pg[479 * 720 + 719] == (bands[239 * 320 + 319] | 0xFF000000u));
-    uint32_t mid = pg[100 * 720 + (32 * 720 + 160) / 320]; /* sul confine tra due bande: in mezzo */
-    CHECK("al confine tra due colonne il colore e' interpolato",
+    uint32_t mid = pg[100 * 720 + (32 * 720 + 160) / 320]; /* on the boundary between two bands: in between */
+    CHECK("at the boundary between two columns the colour is interpolated",
           (mid & 0xFF) > (bands[100 * 320 + 31] & 0xFF) && (mid & 0xFF) < (bands[100 * 320 + 32] & 0xFF));
   }
   mg_core_overlay_present(canvas, 320, 240);
   base1 = lo(H264RING_W_OVL_BASE);
   usleep(5000);
   mg_core_overlay_present(canvas, 320, 240);
-  CHECK("il disegno successivo va nell'altra pagina", lo(H264RING_W_OVL_BASE) != base1);
+  CHECK("the next drawing goes to the other page", lo(H264RING_W_OVL_BASE) != base1);
 
-  /* il core di core/: raster largo 640 (parola 80) -> overlay 640, x2 esatto senza sfumature */
+  /* the core in core/: a 640-wide raster (word 80) -> 640 overlay, exactly x2 without blending */
   core.raster_w = 640; usleep(2000);
   mg_core_overlay_present(canvas, 320, 240);
   {
@@ -348,132 +348,132 @@ int main(int argc, char **argv) {
     for (int y = 0; y < 480 && ok; y += 3)
       for (int x = 0; x < 640 && ok; x++)
         ok = pg[y * 640 + x] == (canvas[(y / 2) * 320 + x / 2] | 0xFF000000u);
-    CHECK("raster di 640: overlay 640x480, ogni pixel del canvas esattamente x2", ok);
+    CHECK("640 raster: 640x480 overlay, each canvas pixel exactly x2", ok);
   }
   core.raster_w = 0; usleep(2000);
   mg_core_overlay_present(canvas, 320, 240);
-  CHECK("raster di nuovo 720: overlay 720", lo(H264RING_W_OVL_SIZE) == ((480u << 16) | 720u));
+  CHECK("raster 720 again: 720 overlay", lo(H264RING_W_OVL_SIZE) == ((480u << 16) | 720u));
 
   mg_core_info ci;
   mg_core_get_info(&ci);
-  CHECK("Refresh Rate Auto: si chiede 59.94 a Sunshine", ci.refresh_x100 == 5994 && ci.max_mbs == 3600);
+  CHECK("Refresh Rate Auto: Sunshine is asked for 59.94", ci.refresh_x100 == 5994 && ci.max_mbs == 3600);
   core.refresh = 2; usleep(2000);
   mg_core_get_info(&ci);
-  CHECK("Refresh Rate 60 Hz: si chiede 60", ci.refresh_x100 == 6000);
+  CHECK("Refresh Rate 60 Hz: 60 is asked", ci.refresh_x100 == 6000);
   core.refresh = 3; usleep(2000);
   mg_core_get_info(&ci);
-  CHECK("Refresh Rate 50 Hz: si chiede 50 (576 righe)", ci.refresh_x100 == 5000 && ci.raster_h == 576);
+  CHECK("Refresh Rate 50 Hz: 50 is asked (576 lines)", ci.refresh_x100 == 5000 && ci.raster_h == 576);
   mg_core_overlay_present(canvas, 320, 240);
   {
     const uint32_t *pg = (const uint32_t *)(fbmem + (lo(H264RING_W_OVL_BASE) - H264RING_FB_BYTE));
-    CHECK("a 576 righe l'overlay e' 720x576, il menu al centro",
+    CHECK("at 576 lines the overlay is 720x576, the menu centred",
           lo(H264RING_W_OVL_SIZE) == ((576u << 16) | 720u) && pg[47 * 720 + 300] == (canvas[0] | 0xFF000000u) &&
           pg[48 * 720] == (canvas[0] | 0xFF000000u) && pg[47 * 720] == (canvas[0] | 0xFF000000u));
   }
   core.refresh = 0; core.il = 1; usleep(2000);
   mg_core_get_info(&ci);
-  CHECK("raster interlacciato letto", ci.interlaced && ci.refresh_x100 == 5994);
+  CHECK("interlaced raster read", ci.interlaced && ci.refresh_x100 == 5994);
   core.ver = 0x104; core.w87 = (1u << 13) | (1u << 4); usleep(2000);
   mg_core_get_info(&ci);
-  CHECK("core di core/ con 240p Playback: si chiede 59.91", ci.p240 && !ci.interlaced && ci.refresh_x100 == 5991);
+  CHECK("core in core/ with 240p Playback: 59.91 is asked", ci.p240 && !ci.interlaced && ci.refresh_x100 == 5991);
   core.w87 = (1u << 13) | (2u << 11) | (1u << 4); usleep(2000);
   mg_core_get_info(&ci);
-  CHECK("... a 50 Hz (288p): 49.99", ci.p240 && ci.refresh_x100 == 4999);
+  CHECK("... at 50 Hz (288p): 49.99", ci.p240 && ci.refresh_x100 == 4999);
   core.w87 = (1u << 13) | (1u << 11) | (1u << 4); usleep(2000);
   mg_core_get_info(&ci);
-  CHECK("core di questo repository (60,000 Hz) col 240p: si chiede 60", ci.p240 && ci.refresh_x100 == 6000);
+  CHECK("this repository's core (60.000 Hz) with 240p: 60 is asked", ci.p240 && ci.refresh_x100 == 6000);
   core.w87 = (1u << 13) | (1u << 11); usleep(2000);
   mg_core_get_info(&ci);
-  CHECK("... e senza 240p: 480i a 60", !ci.p240 && ci.interlaced && ci.refresh_x100 == 6000);
+  CHECK("... and without 240p: 480i at 60", !ci.p240 && ci.interlaced && ci.refresh_x100 == 6000);
   core.w87 = (1u << 13); usleep(2000);
   mg_core_get_info(&ci);
-  CHECK("... senza 240p: 480i a 59.94", !ci.p240 && ci.interlaced && ci.refresh_x100 == 5994);
+  CHECK("... without 240p: 480i at 59.94", !ci.p240 && ci.interlaced && ci.refresh_x100 == 5994);
   core.ver = 0; core.w87 = 0; usleep(2000);
 
-  /* menu: tasti */
+  /* menu: keys */
   mg_input_setup(2, on_quit);
   mg_input_set_mode(MG_INPUT_MENU);
   pad(0, H264RING_PAD_A, 0, 0); poll();
-  CHECK("un tasto gia' premuto all'avvio non conta", mg_input_menu_key(0) == MG_KEY_NONE);
+  CHECK("a key already pressed at start does not count", mg_input_menu_key(0) == MG_KEY_NONE);
   pad(0, 0, 0, 0); poll();
   pad(1, H264RING_PAD_DOWN, 0, 0); poll();
-  CHECK("menu: croce giu' del pad 2", mg_input_menu_key(0) == MG_KEY_DOWN);
+  CHECK("menu: pad 2's d-pad down", mg_input_menu_key(0) == MG_KEY_DOWN);
   pad(1, 0, 0, 0); poll();
   key(1, 0x75, 1); key(1, 0x75, 0); poll();
-  CHECK("menu: freccia su", mg_input_menu_key(0) == MG_KEY_UP);
+  CHECK("menu: arrow up", mg_input_menu_key(0) == MG_KEY_UP);
   key(0, 0x5A, 1); key(0, 0x5A, 0); poll();
-  CHECK("menu: Invio", mg_input_menu_key(0) == MG_KEY_ENTER);
+  CHECK("menu: Enter", mg_input_menu_key(0) == MG_KEY_ENTER);
   key(0, 0x76, 1); key(0, 0x76, 0); poll();
   CHECK("menu: Esc", mg_input_menu_key(0) == MG_KEY_BACK);
   pad(0, H264RING_PAD_B, 0, 0); poll(); pad(0, 0, 0, 0); poll();
-  CHECK("menu: B = indietro", mg_input_menu_key(0) == MG_KEY_BACK);
+  CHECK("menu: B = back", mg_input_menu_key(0) == MG_KEY_BACK);
   pad(0, H264RING_PAD_RIGHT, 0, 0); poll();
   int k1 = mg_input_menu_key(0);
   usleep(450000); poll();
   int k2 = mg_input_menu_key(0);
   pad(0, 0, 0, 0); poll();
-  CHECK("menu: destra tenuta si ripete", k1 == MG_KEY_RIGHT && k2 == MG_KEY_RIGHT);
-  CHECK("nel menu niente va al PC", ncalls == 0);
+  CHECK("menu: right held repeats", k1 == MG_KEY_RIGHT && k2 == MG_KEY_RIGHT);
+  CHECK("in the menu nothing goes to the PC", ncalls == 0);
 
   /* ---- stream ---- */
   printf("Stream\n");
-  mg_core_set_ritmo(true);
+  mg_core_set_rhythm(true);
   mg_core_stream_begin();
   usleep(2000);
-  CHECK("inizio stream: sessione nuova (flush), overlay spento", nsess == 2 &&
+  CHECK("stream start: new session (flush), overlay off", nsess == 2 &&
         !((lo(H264RING_W_OVL_CTL) >> H264RING_OVL_CTL_ENABLE_BIT) & 1));
   mg_input_set_mode(MG_INPUT_STREAM);
   clear_calls(); poll();
-  CHECK("annuncia 2 pad Xbox con vibrazione", count(C_ARRIVE) == 2 && calls[find(C_ARRIVE, 0, 3)].e == LI_CCAP_RUMBLE);
+  CHECK("announces 2 Xbox pads with rumble", count(C_ARRIVE) == 2 && calls[find(C_ARRIVE, 0, 3)].e == LI_CCAP_RUMBLE);
   pad(0, H264RING_PAD_A | H264RING_PAD_LT, 0, 0); clear_calls(); poll();
   { int i = last_pad(0);
-    CHECK("pad 1: A e LT", i >= 0 && calls[i].c == A_FLAG && calls[i].d == 255 && calls[i].b == 3); }
+    CHECK("pad 1: A and LT", i >= 0 && calls[i].c == A_FLAG && calls[i].d == 255 && calls[i].b == 3); }
   pad(0, 0, 0, 0); poll();
   pad(1, H264RING_PAD_UP, 0, -100); clear_calls(); poll();
   { int i = last_pad(1);
-    CHECK("pad 2: levetta su, la croce che ne ricava il MiSTer tolta", i >= 0 && calls[i].c == 0 && calls[i].g == 25800); }
+    CHECK("pad 2: stick up, the d-pad the MiSTer derives from it removed", i >= 0 && calls[i].c == 0 && calls[i].g == 25800); }
   pad(1, 0, 0, 0); poll();
   clear_calls();
   key(0, 0x1C, 1); key(0, 0x1C, 0); key(1, 0x75, 1); key(1, 0x75, 0); key(0, 0x77, 0); poll();
-  CHECK("tastiera: A giu' e su", find(C_KEY, 'A', KEY_ACTION_DOWN) >= 0 && find(C_KEY, 'A', KEY_ACTION_UP) >= 0);
+  CHECK("keyboard: A down and up", find(C_KEY, 'A', KEY_ACTION_DOWN) >= 0 && find(C_KEY, 'A', KEY_ACTION_UP) >= 0);
   { int i = find(C_KEY, 0x26, KEY_ACTION_DOWN);
-    CHECK("tastiera: freccia su con il flag esteso", i >= 0 && (calls[i].c & MODIFIER_EXTENDED)); }
-  CHECK("rilascio senza pressione ignorato (NumLock)", find(C_KEY, 0x90, -999) < 0);
+    CHECK("keyboard: arrow up with the extended flag", i >= 0 && (calls[i].c & MODIFIER_EXTENDED)); }
+  CHECK("release without a press ignored (NumLock)", find(C_KEY, 0x90, -999) < 0);
   clear_calls();
   mouse(5, 3, 1, 1); poll();
-  CHECK("mouse: movimento (Y invertita), tasto sinistro, rotellina",
+  CHECK("mouse: movement (Y inverted), left button, wheel",
         find(C_MOVE, 5, -3) >= 0 && find(C_BTN, BUTTON_ACTION_PRESS, BUTTON_LEFT) >= 0 && find(C_SCROLL, -1, -999) >= 0);
   mouse(0, 0, 0, 0); poll();
 
-  /* vibrazione */
+  /* rumble */
   mg_rumble(0, 0xFF00, 0x8000);
   mg_rumble(1, 0x1000, 0);
   poll();
-  CHECK("vibrazione pad 1 e 2 scritta al core", rumble_word(0) == 0xFF80 && rumble_word(1) == 0x1000);
+  CHECK("rumble of pads 1 and 2 written to the core", rumble_word(0) == 0xFF80 && rumble_word(1) == 0x1000);
   mg_rumble_stop_all(); poll();
-  CHECK("vibrazione fermata", rumble_word(0) == 0 && rumble_word(1) == 0);
+  CHECK("rumble stopped", rumble_word(0) == 0 && rumble_word(1) == 0);
 
-  /* modalità mouse */
+  /* mouse mode */
   clear_calls();
   pad(0, H264RING_PAD_START, 0, 0); poll();
   usleep(1050000); poll();
-  CHECK("Start tenuto 1 s: impulso di vibrazione", rumble_word(0) == 0x6060);
+  CHECK("Start held 1 s: rumble pulse", rumble_word(0) == 0x6060);
   pad(0, 0, 0, 0); poll();
   clear_calls();
   pad(0, H264RING_PAD_A, 127, 0); poll(); usleep(20000); poll();
-  CHECK("modalita' mouse: A = tasto sinistro, levetta = puntatore, niente pad",
+  CHECK("mouse mode: A = left button, stick = pointer, no pad",
         find(C_BTN, BUTTON_ACTION_PRESS, BUTTON_LEFT) >= 0 && find(C_MOVE, -999, -999) >= 0 && last_pad(0) < 0);
   pad(0, 0, 0, 0); poll();
   usleep(200000); poll();
-  CHECK("impulso finito", rumble_word(0) == 0);
+  CHECK("pulse over", rumble_word(0) == 0);
   pad(0, H264RING_PAD_START, 0, 0); poll(); usleep(1050000); poll();
   pad(0, 0, 0, 0); poll();
   clear_calls();
   pad(0, H264RING_PAD_A, 0, 0); poll();
-  CHECK("Start tenuto di nuovo: torna il pad", last_pad(0) >= 0 && calls[last_pad(0)].c == A_FLAG);
+  CHECK("Start held again: the pad is back", last_pad(0) >= 0 && calls[last_pad(0)].c == A_FLAG);
   pad(0, 0, 0, 0); poll();
 
-  /* Guide e OSD */
+  /* Guide and OSD */
   clear_calls();
   pad(0, H264RING_PAD_BACK | H264RING_PAD_START, 0, 0); poll();
   CHECK("Select+Start = Guide", last_pad(0) >= 0 && calls[last_pad(0)].c == SPECIAL_FLAG);
@@ -481,41 +481,41 @@ int main(int argc, char **argv) {
   key(0, 0x1C, 1); poll();
   clear_calls();
   osd_ev(1); poll();
-  CHECK("OSD aperto: il tasto tenuto si rilascia", find(C_KEY, 'A', KEY_ACTION_UP) >= 0);
+  CHECK("OSD open: the held key is released", find(C_KEY, 'A', KEY_ACTION_UP) >= 0);
   clear_calls();
   pad(0, H264RING_PAD_X, 0, 0); key(0, 0x32, 1); poll();
-  CHECK("con l'OSD aperto non passa niente", ncalls == 0);
+  CHECK("with the OSD open nothing passes", ncalls == 0);
   pad(0, 0, 0, 0); key(0, 0x32, 0);
   action(0); osd_ev(0); poll();
   { int i = last_pad(0);
-    CHECK("Send Home dall'OSD: Guide sul pad 1", i >= 0 && (calls[i].c & SPECIAL_FLAG)); }
+    CHECK("Send Home from the OSD: Guide on pad 1", i >= 0 && (calls[i].c & SPECIAL_FLAG)); }
   usleep(150000); poll(); poll();
   { int i = last_pad(0);
-    CHECK("... e poi rilasciato", i >= 0 && calls[i].c == 0); }
-  CHECK("niente rilascio di B (premuto con l'OSD aperto)", find(C_KEY, 'B', KEY_ACTION_UP) < 0);
+    CHECK("... and then released", i >= 0 && calls[i].c == 0); }
+  CHECK("no release of B (pressed with the OSD open)", find(C_KEY, 'B', KEY_ACTION_UP) < 0);
   quits = 0;
   osd_ev(1); action(1); osd_ev(0); poll();
-  CHECK("Program menu dall'OSD: torna al menu", quits == 1);
+  CHECK("Program menu from the OSD: back to the menu", quits == 1);
 
-  /* uscite */
+  /* exits */
   quits = 0;
   pad(0, H264RING_PAD_BACK | H264RING_PAD_START | H264RING_PAD_LB | H264RING_PAD_RB, 0, 0); poll();
-  CHECK("Select+Start+LB+RB: uscita", quits == 1);
+  CHECK("Select+Start+LB+RB: exit", quits == 1);
   pad(0, 0, 0, 0); poll();
   quits = 0; clear_calls();
   key(0, 0x14, 1); key(0, 0x11, 1); key(0, 0x12, 1); key(0, 0x15, 1); key(0, 0x15, 0); poll();
-  CHECK("Ctrl+Alt+Shift+Q: Q non va al PC e non esce subito", find(C_KEY, 'Q', -999) < 0 && quits == 0);
+  CHECK("Ctrl+Alt+Shift+Q: Q does not go to the PC and does not exit at once", find(C_KEY, 'Q', -999) < 0 && quits == 0);
   key(0, 0x14, 0); key(0, 0x11, 0); key(0, 0x12, 0); poll();
-  CHECK("... esce quando i modificatori tornano su", quits == 1);
+  CHECK("... exits when the modifiers come back up", quits == 1);
 
-  /* ---- video e audio ---- */
-  printf("Video e audio\n");
+  /* ---- video and audio ---- */
+  printf("Video and audio\n");
   CHECK("setup H.264 640x480", mg_video_callbacks.setup(VIDEO_FORMAT_H264, 640, 480, 60, NULL, 0) == 0);
-  CHECK("rifiuta HEVC", mg_video_callbacks.setup(VIDEO_FORMAT_H265, 640, 480, 60, NULL, 0) != 0);
-  CHECK("rifiuta 1920x1080 (oltre i macroblocchi del core)",
+  CHECK("refuses HEVC", mg_video_callbacks.setup(VIDEO_FORMAT_H265, 640, 480, 60, NULL, 0) != 0);
+  CHECK("refuses 1920x1080 (beyond the core's macroblocks)",
         mg_video_callbacks.setup(VIDEO_FORMAT_H264, 1920, 1080, 30, NULL, 0) != 0);
   OPUS_MULTISTREAM_CONFIGURATION cfg = { 48000, 2, 1, 1, 240, { 0, 1 } };
-  CHECK("audio Opus 48 kHz stereo", mg_audio_callbacks.init(AUDIO_CONFIGURATION_STEREO, &cfg, NULL, 0) == 0);
+  CHECK("Opus audio 48 kHz stereo", mg_audio_callbacks.init(AUDIO_CONFIGURATION_STEREO, &cfg, NULL, 0) == 0);
   int err;
   OpusEncoder *enc = opus_encoder_create(48000, 2, OPUS_APPLICATION_RESTRICTED_LOWDELAY, &err);
   int16_t pcm[240 * 2];
@@ -526,7 +526,7 @@ int main(int argc, char **argv) {
   mg_audio_callbacks.decodeAndPlaySample((char *)pkt, plen);
   mg_core_counters cn;
   mg_core_get_counters(&cn);
-  CHECK("audio prima del primo IDR: non scritto", cn.aud_early == 1 && cn.aud == 0);
+  CHECK("audio before the first IDR: not written", cn.aud_early == 1 && cn.aud == 0);
 
   mg_core_set_pacing(false);
   size_t first_p = 0;
@@ -536,7 +536,7 @@ int main(int argc, char **argv) {
 #define SUBMIT(i) (memset(&e, 0, sizeof e), e.data = (char *)buf + au[i].off, e.length = (int)au[i].len, \
                    memset(&du, 0, sizeof du), du.frameType = is_idr[i] ? FRAME_TYPE_IDR : FRAME_TYPE_PFRAME, \
                    du.fullLength = (int)au[i].len, du.bufferList = &e, mg_video_callbacks.submitDecodeUnit(&du))
-  CHECK("una P prima dell'IDR: scartata, chiede l'IDR", first_p < nau && SUBMIT(first_p) == DR_NEED_IDR);
+  CHECK("a P before the IDR: dropped, asks for the IDR", first_p < nau && SUBMIT(first_p) == DR_NEED_IDR);
   int bad = 0;
   size_t sent = 0;
   for (size_t i = 0; i < nau; i++) {
@@ -545,7 +545,7 @@ int main(int argc, char **argv) {
     if (i % 4 == 0) mg_audio_callbacks.decodeAndPlaySample((char *)pkt, plen);
     if (i % 40 == 39) mg_audio_callbacks.decodeAndPlaySample(NULL, 0);
   }
-  CHECK("tutte le access unit accettate", bad == 0);
+  CHECK("every access unit accepted", bad == 0);
   settle();
   {
     static struct rec_info ri[20000];
@@ -562,18 +562,18 @@ int main(int argc, char **argv) {
         if (ri[i].len != 240 * 4) same = 0;
       }
     }
-    printf("    (%d record: %zu video, %zu audio)\n", nr, v, a);
-    CHECK("nel ring le access unit, identiche e in ordine", v == nau && same);
-    CHECK("e l'audio dopo il primo IDR (anche i pacchetti persi, mascherati)", a > 0);
+    printf("    (%d records: %zu video, %zu audio)\n", nr, v, a);
+    CHECK("in the ring the access units, identical and in order", v == nau && same);
+    CHECK("and the audio after the first IDR (lost packets too, concealed)", a > 0);
   }
   mg_core_get_counters(&cn);
-  CHECK("contatori: AU e audio", cn.au == nau && cn.aud > 0 && cn.aud_plc > 0);
+  CHECK("counters: AUs and audio", cn.au == nau && cn.aud > 0 && cn.aud_plc > 0);
 
-  /* il passo: la prossima immagine solo dopo la presa della precedente */
-  printf("Passo\n");
+  /* pacing: the next picture only after the previous one was taken */
+  printf("Pacing\n");
   mg_core_set_pacing(true);
   mg_core_stream_end();
-  mg_core_stream_begin();          /* contatori del passo da capo (due sessioni in più) */
+  mg_core_stream_begin();          /* pacing counters from scratch (two more sessions) */
   usleep(2000);
   {
     size_t idr0 = 0;
@@ -583,58 +583,58 @@ int main(int argc, char **argv) {
     int r1 = SUBMIT(idr0);
     clock_gettime(CLOCK_MONOTONIC, &a1);
     double ms1 = (a1.tv_sec - a0.tv_sec) * 1e3 + (a1.tv_nsec - a0.tv_nsec) / 1e6;
-    CHECK("la prima immagine passa subito", r1 == DR_OK && ms1 < 20);
-    /* il core la prende dopo ~25 ms: la seconda aspetta la presa */
+    CHECK("the first picture passes at once", r1 == DR_OK && ms1 < 20);
+    /* the core takes it after ~25 ms: the second waits for the pickup */
     pthread_t pk;
     pthread_create(&pk, NULL, take_later, (void *)(intptr_t)25);
     double ms2 = timed_submit(idr0 + 1);
     pthread_join(pk, NULL);
-    CHECK("la seconda aspetta che il core prenda la prima (~25 ms)", ms2 > 18 && ms2 < 45);
+    CHECK("the second waits for the core to take the first (~25 ms)", ms2 > 18 && ms2 < 45);
     core.pick++; usleep(2000);
     double ms3 = timed_submit(idr0 + 2);
-    CHECK("la precedente gia' presa: nessuna attesa", ms3 < 10);
+    CHECK("the previous one already taken: no wait", ms3 < 10);
     pending_frames = 1;
     double ms4 = timed_submit(idr0 + 3);
     pending_frames = 0;
-    CHECK("con un'immagine piu' nuova dietro: nessuna attesa", ms4 < 10);
-    core.skip++; usleep(2000);    /* la terza scartata dal core */
+    CHECK("with a newer picture behind: no wait", ms4 < 10);
+    core.skip++; usleep(2000);    /* the third dropped by the core */
     double ms5 = timed_submit(idr0 + 4);
-    CHECK("un'immagine mai presa: attesa al massimo ~50 ms", ms5 > 40 && ms5 < 80);
-    core.pick += 2; usleep(2000); /* le ultime due prese */
+    CHECK("a picture never taken: a wait of at most ~50 ms", ms5 > 40 && ms5 < 80);
+    core.pick += 2; usleep(2000); /* the last two taken */
     double ms6 = timed_submit(idr0 + 5);
-    CHECK("dopo una persa il conto si riallinea", ms6 < 10);
+    CHECK("after a lost one the count realigns", ms6 < 10);
   }
 
-  /* errore di decodifica */
+  /* decode error */
   idr_calls = 0;
-  usleep(300000); /* oltre la tolleranza dopo l'ultimo IDR */
+  usleep(300000); /* beyond the tolerance after the last IDR */
   core.fe_err += 3;
   usleep(3000);
   mg_core_poll();
-  CHECK("errore del decoder: chiede un IDR", idr_calls == 1);
-  CHECK("le P dopo l'errore si scartano fino all'IDR", SUBMIT(first_p) == DR_NEED_IDR);
+  CHECK("decoder error: asks for an IDR", idr_calls == 1);
+  CHECK("the P frames after the error are dropped until the IDR", SUBMIT(first_p) == DR_NEED_IDR);
   size_t idr2 = 0;
   for (size_t i = nau; i-- > 0;) if (is_idr[i]) { idr2 = i; break; }
-  CHECK("l'IDR riparte", SUBMIT(idr2) == DR_OK);
+  CHECK("the IDR restarts", SUBMIT(idr2) == DR_OK);
 
-  /* fine dello stream */
+  /* end of the stream */
   mg_audio_callbacks.cleanup();
   mg_video_callbacks.cleanup();
   mg_input_set_mode(MG_INPUT_MENU);
   mg_core_stream_end();
   usleep(3000);
-  CHECK("fine stream: sessione nuova (schermo nero), sempre aperta per il menu", nsess == 5);
-  CHECK("il menu torna nell'overlay", mg_core_overlay_present(canvas, 320, 240) == 0 &&
+  CHECK("stream end: new session (black screen), still open for the menu", nsess == 5);
+  CHECK("the menu is back in the overlay", mg_core_overlay_present(canvas, 320, 240) == 0 &&
         ((lo(H264RING_W_OVL_CTL) >> H264RING_OVL_CTL_ENABLE_BIT) & 1));
 
-  /* core scaricato */
-  printf("Core scaricato\n");
+  /* core unloaded */
+  printf("Core unloaded\n");
   core.dead = 1;
   for (int i = 0; i < 40 && !gones; i++) { mg_core_poll(); usleep(50000); }
-  CHECK("battito fermo: il programma esce", gones == 1);
+  CHECK("heartbeat stopped: the program exits", gones == 1);
 
   core.stop = 1;
   pthread_join(ct, NULL);
-  printf(fails ? "test_core: %d FALLITI\n" : "test_core: TUTTO OK\n", fails);
+  printf(fails ? "test_core: %d FAILED\n" : "test_core: ALL OK\n", fails);
   return fails ? 1 : 0;
 }

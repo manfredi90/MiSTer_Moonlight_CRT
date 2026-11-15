@@ -4,7 +4,7 @@ name: client
 
 on:
   push:
-    paths: ['client/**', 'LEGGIMI.md', '.github/workflows/client.yml']
+    paths: ['client/**', 'README.md', '.github/workflows/client.yml']
   pull_request:
     paths: ['client/**']
   workflow_dispatch:

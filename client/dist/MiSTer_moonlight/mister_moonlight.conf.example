@@ -1,0 +1,21 @@
+# MiSTer Moonlight configuration (used by Scripts/mister_moonlight.sh)
+
+# IP address of the PC with Sunshine. Optional with MENU=1: PCs are added, renamed and
+# removed from the menu (HOST, if set, enters the list the first time)
+HOST=192.168.1.100
+
+# 1 = start with the on-screen menu (PCs, apps, bitrate, audio...; the choices made in the
+#     menu are kept in menu.cfg)
+# 0 = start APP right away with the options in EXTRA
+MENU=1
+
+# Sunshine app to start with MENU=0
+APP="Desktop"
+
+# Extra options, for example: -width 640 -height 480 -bitrate 10000 -fps 30 -pads 2 -quitappafter
+# (-stats: rhythm counters and trace.csv at the stream's end, up to 12 MB on the SD: for tests only)
+EXTRA=""
+
+# The log (last_stream.log) goes to the SD on exit; LOG_EVERY=<seconds> also copies it during the
+# stream (useful if the MiSTer is switched off halfway, but every copy rewrites the whole file)
+LOG_EVERY=0
