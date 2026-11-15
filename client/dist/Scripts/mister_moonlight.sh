@@ -32,23 +32,26 @@ for W in /sys/class/net/wlan*; do
   iw dev $N set power_save off 2>/dev/null || iwconfig $N power off 2>/dev/null
 done
 LOG=$D/ultimo_stream.log
-# Durante lo streaming il log sta in RAM (scrivere sulla SD puo' bloccare); alla fine va sulla SD
+# Durante lo streaming il log sta in RAM (scrivere sulla SD puo' bloccare e la consuma); va sulla
+# SD solo all'uscita. Con LOG_OGNI=<secondi> nella configurazione anche durante (per un'uscita non
+# pulita: il MiSTer spento a meta'), ma ogni copia riscrive tutto il file
 TMPLOG=/tmp/mister_moonlight.log
+LOG_OGNI=${LOG_OGNI:-0}
 NETINFO="avvio script: uptime $(cut -d' ' -f1 /proc/uptime) s; rete: $(ip route 2>/dev/null | head -1)"
 echo "Carico il core H264 e apro Moonlight${HOST:+ ($HOST)}... log in $LOG"
 # Staccato dallo script: sopravvive al caricamento del core. Alla fine torna al menu
 # del MiSTer, ma solo se e' ancora attivo il core H264.
 setsid nohup bash -c "
   echo \"[script] $NETINFO\"
-  ( while sleep 5; do cp $TMPLOG $LOG; done ) &
-  COPIER=\$!
+  COPIER=
+  if [ \"$LOG_OGNI\" -gt 0 ] 2>/dev/null; then ( while sleep $LOG_OGNI; do cp $TMPLOG $LOG; done ) & COPIER=\$!; fi
   if [ \"$MENU\" = 0 ]; then
     $BIN stream $HOST -app \"$APP\" $EXTRA
   else
     $BIN menu $HOST $EXTRA
   fi
   echo \"[script] uscita: \$?\"
-  kill \$COPIER
+  [ -n \"\$COPIER\" ] && kill \$COPIER
   cp $TMPLOG $LOG
   [ \"\$(cat /tmp/CORENAME 2>/dev/null)\" = H264 ] && echo 'load_core /media/fat/menu.rbf' > /dev/MiSTer_cmd
 " > $TMPLOG 2>&1 < /dev/null &
