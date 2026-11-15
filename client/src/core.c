@@ -619,7 +619,10 @@ static void *guard_thread(void *arg) {
         /* 480i <-> 240p dall'OSD: la presa cade altrove nel quadro e il raster riparte con un'altra
          * fase; il genlock agganciato (correzione limitata) ci metterebbe 20 s: si riaggancia */
         if ((st.w[1] & 0xFFFFu) >= 0x103u) {
-          bool p240n = ((st.w[87] >> 4) & 1u) && ((st.w[87] >> 13) & 1u);
+          /* [15] il raster fisico è ora 240p (non [4] && [13], la richiesta e l'interlacciato:
+           * in sessione davano 480i col core in 240p e non vedevano il passaggio, che arrivava solo
+           * come griglia persa, 15/11) */
+          bool p240n = (st.w[87] >> 15) & 1u;
           if (p240n != g.p240) {
             g.p240 = p240n;
             g.eoff = g.P * (p240n ? 425947.0 : 428142.0) / 450000.0;
