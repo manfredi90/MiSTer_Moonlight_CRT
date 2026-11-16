@@ -50,7 +50,7 @@ In the menu: bitrate (up to 10 Mbps; auto = 10 Mbps with *genlock*, 5 Mbps with 
 and *60 Hz*), audio, closing the app on exit, sync, the
 PC's resolution. The choices are kept in `MiSTer_moonlight/menu.cfg`, with the list of PCs.
 
-**Sync** (with this repository's core):
+**Sync**:
 - *genlock* (the default): the core moves its video PLL and the raster runs at the PC's rate
   (59.94 Hz too), and the core keeps one decoded picture in reserve (about 10 ms more latency
   than *genlock low latency*). It locks within 10-20 s of the start and after a 240p/480i switch.
