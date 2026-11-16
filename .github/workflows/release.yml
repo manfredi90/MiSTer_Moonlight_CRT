@@ -1,4 +1,4 @@
-# A DRAFT release from a package on the "builds" branch (release/MiSTer_moonlight-<version>.zip,
+# A DRAFT release from a package on the "builds" branch (release/MiSTer_Moonlight_CRT-<version>.zip,
 # the zip tested on the MiSTer: client, scripts, README and the H264 core). Nothing is published:
 # the draft is reviewed and published by hand.
 name: release
@@ -26,13 +26,13 @@ jobs:
           git init -q b && cd b
           git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GH_REPO}.git"
           git fetch -q --depth 1 origin builds
-          git show "FETCH_HEAD:release/MiSTer_moonlight-${VER}.zip" > "../MiSTer_moonlight-${VER}.zip"
+          git show "FETCH_HEAD:release/MiSTer_Moonlight_CRT-${VER}.zip" > "../MiSTer_Moonlight_CRT-${VER}.zip"
           git show "FETCH_HEAD:release/notes-${VER}.md" > ../notes.md
-          cd .. && unzip -l "MiSTer_moonlight-${VER}.zip"
+          cd .. && unzip -l "MiSTer_Moonlight_CRT-${VER}.zip"
 
       - name: Draft release
         run: |
           gh release delete "v${VER}" --yes 2>/dev/null || true
-          gh release create "v${VER}" "MiSTer_moonlight-${VER}.zip" --draft --target "${GITHUB_SHA}" \
-            --title "MiSTer Moonlight ${VER}" --notes-file notes.md
+          gh release create "v${VER}" "MiSTer_Moonlight_CRT-${VER}.zip" --draft --target "${GITHUB_SHA}" \
+            --title "MiSTer Moonlight CRT ${VER}" --notes-file notes.md
           echo "::notice::draft v${VER}"

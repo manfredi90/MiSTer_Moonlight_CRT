@@ -1482,16 +1482,16 @@ int mg_core_attach(h264ring *r, void (*on_gone)(void), void (*on_refused)(const 
   return rc;
 }
 
-static const char *core_rbf; /* NULL: MiSTer_moonlight/core/H264 if present, otherwise _Other/H264 */
+static const char *core_rbf; /* NULL: MiSTer_moonlight_crt/core/H264 if present, otherwise _Other/H264 */
 void mg_core_set_rbf(const char *rbf) { core_rbf = (rbf && *rbf) ? rbf : NULL; }
 
-/* the core lives with Moonlight (MiSTer_moonlight/core): from the MiSTer's menu, on its own, it
+/* the core lives with Moonlight (MiSTer_moonlight_crt/core): from the MiSTer's menu, on its own, it
  * would only show a black screen. _Other/H264 stays for whoever put it there */
 static const char *core_default(void) {
   glob_t gb;
-  bool here = glob("/media/fat/MiSTer_moonlight/core/H264_*.rbf", 0, NULL, &gb) == 0 && gb.gl_pathc > 0;
+  bool here = glob("/media/fat/MiSTer_moonlight_crt/core/H264_*.rbf", 0, NULL, &gb) == 0 && gb.gl_pathc > 0;
   globfree(&gb);
-  return here ? "MiSTer_moonlight/core/H264" : NULL;
+  return here ? "MiSTer_moonlight_crt/core/H264" : NULL;
 }
 
 int mg_core_open(void (*on_gone)(void), void (*on_refused)(const char *why)) {
@@ -1500,7 +1500,7 @@ int mg_core_open(void (*on_gone)(void), void (*on_refused)(const char *why)) {
   int rc = h264ring_launch_core(core_rbf, LAUNCH_MS);
   if (rc) {
     printf("[core] the H264 core does not start (%s): %s_*.rbf is needed on the SD\n", strerror(-rc),
-           core_rbf ? core_rbf : "MiSTer_moonlight/core/H264");
+           core_rbf ? core_rbf : "MiSTer_moonlight_crt/core/H264");
     return rc;
   }
   h264ring *r;

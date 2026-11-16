@@ -289,7 +289,7 @@ static int load_server_status(PSERVER_DATA server) {
   gs_https_error[0] = 0;
   for (i = 0; i < 2 && ret != GS_OK; i++) {
     ret = load_serverinfo(server, i == 0);
-    /* MiSTer Moonlight: why HTTPS failed, for the diagnosis */
+    /* MiSTer Moonlight CRT: why HTTPS failed, for the diagnosis */
     if (i == 0 && ret != GS_OK)
       snprintf(gs_https_error, sizeof(gs_https_error), "%d %s", ret, gs_error ? gs_error : "");
   }

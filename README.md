@@ -1,4 +1,4 @@
-# MiSTer Moonlight
+# MiSTer Moonlight CRT
 
 A [Moonlight](https://moonlight-stream.org) client for [Sunshine](https://github.com/LizardByte/Sunshine)
 that runs on the MiSTer FPGA's ARM and plays the stream through a modified version of the
@@ -23,14 +23,14 @@ stream smooth when the PC's frame rate is not a constant 60 Hz. The stock H264 c
 
 ## Install
 
-1. Copy the release zip's `Scripts` and `MiSTer_moonlight` folders to the root of the SD card
-   (`/media/fat`). The zip includes the H264 core, in `MiSTer_moonlight/core`.
-2. Run **Scripts → mister_moonlight**: the list of PCs opens. Choose *+ Add PC* and type the IP
+1. Copy the release zip's `Scripts` and `MiSTer_moonlight_crt` folders to the root of the SD card
+   (`/media/fat`). The zip includes the H264 core, in `MiSTer_moonlight_crt/core`.
+2. Run **Scripts → mister_moonlight_crt**: the list of PCs opens. Choose *+ Add PC* and type the IP
    address of the PC with Sunshine (on-screen keyboard with the pad, or a real keyboard), then a
-   name. If `mister_moonlight.conf` has `HOST=...`, that PC enters the list by itself.
+   name. If `mister_moonlight_crt.conf` has `HOST=...`, that PC enters the list by itself.
 3. The menu shows a PIN to enter in Sunshine's web page (PIN tab).
 
-`MiSTer_moonlight/mister_moonlight.conf` is created from `mister_moonlight.conf.example` on the
+`MiSTer_moonlight_crt/mister_moonlight_crt.conf` is created from `mister_moonlight_crt.conf.example` on the
 first run; `HOST` there is required only with `MENU=0`.
 
 ## Controls
@@ -48,7 +48,7 @@ first run; `HOST` there is required only with `MENU=0`.
 
 In the menu: bitrate (up to 10 Mbps; auto = 10 Mbps with *genlock*, 5 Mbps with *genlock low latency*
 and *60 Hz*), audio, closing the app on exit, sync, the
-PC's resolution. The choices are kept in `MiSTer_moonlight/menu.cfg`, with the list of PCs.
+PC's resolution. The choices are kept in `MiSTer_moonlight_crt/menu.cfg`, with the list of PCs.
 
 **Sync**:
 - *genlock* (the default): the core moves its video PLL and the raster runs at the PC's rate
@@ -74,7 +74,7 @@ screen. The stream stays 640x480 (so 1280x720 is still letterboxed). It needs a 
 with **Advanced Display Options > Resolution: "Use resolution provided by the client"**; the PC's
 monitor (or a virtual display) must accept the resolution.
 
-The log is `MiSTer_moonlight/last_stream.log`, written to the SD when the program exits. With
+The log is `MiSTer_moonlight_crt/last_stream.log`, written to the SD when the program exits. With
 `-stats` in `EXTRA` it also reports every 10 s the PC's frame rate and the repeated or dropped
 frames, and `trace.csv` is written at the stream's end (for tests only).
 

@@ -1,5 +1,5 @@
 # The client: cross-compiled for the MiSTer's ARM, tested against the fake core under
-# qemu-arm, packaged as the SD-card zip (artifact MiSTer_moonlight).
+# qemu-arm, packaged as the SD-card zip (artifact MiSTer_moonlight_crt).
 name: client
 
 on:
@@ -32,5 +32,5 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: MiSTer_moonlight
+          name: MiSTer_moonlight_crt
           path: client/work/pkg/

@@ -1,4 +1,4 @@
-# MiSTer Moonlight configuration (used by Scripts/mister_moonlight.sh)
+# MiSTer Moonlight CRT configuration (used by Scripts/mister_moonlight_crt.sh)
 
 # IP address of the PC with Sunshine. Optional with MENU=1: PCs are added, renamed and
 # removed from the menu (HOST, if set, enters the list the first time)

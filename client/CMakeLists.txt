@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.13)
-project(mister_moonlight LANGUAGES C)
+project(mister_moonlight_crt LANGUAGES C)
 set(CMAKE_C_STANDARD 11)
 
 # Folder with the static dependencies (see scripts/build-deps.sh)
@@ -38,15 +38,15 @@ target_include_directories(h264ring PUBLIC third_party/h264ring/include PRIVATE 
 target_compile_definitions(h264ring PRIVATE _DEFAULT_SOURCE)
 set_source_files_properties(third_party/h264ring/lib/h264ring_cavlc.c PROPERTIES COMPILE_OPTIONS "-O3")
 
-add_executable(mister_moonlight
+add_executable(mister_moonlight_crt
   src/main.c src/core.c src/input.c src/menu.c src/netdiag.c)
-target_compile_options(mister_moonlight PRIVATE -Wall -Wextra -Wno-unused-parameter -O2)
-target_link_libraries(mister_moonlight PRIVATE gamestream h264ring moonlight-common-c PkgConfig::DEPS m
+target_compile_options(mister_moonlight_crt PRIVATE -Wall -Wextra -Wno-unused-parameter -O2)
+target_link_libraries(mister_moonlight_crt PRIVATE gamestream h264ring moonlight-common-c PkgConfig::DEPS m
   OpenSSL::SSL OpenSSL::Crypto pthread dl m)
 # libopus.a needs libm: it goes after every static library
-target_link_options(mister_moonlight PRIVATE LINKER:--start-group)
+target_link_options(mister_moonlight_crt PRIVATE LINKER:--start-group)
 if(MG_STATIC)
-  target_link_options(mister_moonlight PRIVATE -static -s)
+  target_link_options(mister_moonlight_crt PRIVATE -static -s)
 endif()
 
 # Test on the PC: the program with the fake core in memory (tests/)

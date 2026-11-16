@@ -1,32 +1,32 @@
 #!/bin/bash
-# MiSTer Moonlight: loads the H264 core and opens Moonlight's menu (Sunshine's apps,
+# MiSTer Moonlight CRT: loads the H264 core and opens Moonlight's menu (Sunshine's apps,
 # settings, pairing). During the stream Select+Start+LB+RB (or Ctrl+Alt+Shift+Q) goes back
 # to the menu; B in the menu exits to the MiSTer's menu.
-D=/media/fat/MiSTer_moonlight
-BIN=$D/mister_moonlight
+D=/media/fat/MiSTer_moonlight_crt
+BIN=$D/mister_moonlight_crt
 [ -x "$BIN" ] || chmod +x "$BIN" 2>/dev/null
-[ -f $D/mister_moonlight.conf ] || cp $D/mister_moonlight.conf.example $D/mister_moonlight.conf 2>/dev/null
-eval "$(tr -d '\r' < $D/mister_moonlight.conf)"
+[ -f $D/mister_moonlight_crt.conf ] || cp $D/mister_moonlight_crt.conf.example $D/mister_moonlight_crt.conf 2>/dev/null
+eval "$(tr -d '\r' < $D/mister_moonlight_crt.conf)"
 # HOST is needed only without the menu (MENU=0); with the menu PCs are added from the menu itself
 [ "$HOST" = 192.168.1.100 ] && HOST=
 if [ "$MENU" = 0 ] && [ -z "$HOST" ]; then
-  echo "Set HOST (the address of the PC with Sunshine) in $D/mister_moonlight.conf"
+  echo "Set HOST (the address of the PC with Sunshine) in $D/mister_moonlight_crt.conf"
   exit 1
 fi
-# the core: MiSTer_moonlight/core/H264_*.rbf (or _Other/H264_*.rbf), unless EXTRA has -core
+# the core: MiSTer_moonlight_crt/core/H264_*.rbf (or _Other/H264_*.rbf), unless EXTRA has -core
 case " $EXTRA " in
   *" -core "*) ;;
-  *) if ! ls /media/fat/MiSTer_moonlight/core/H264_*.rbf /media/fat/_Other/H264_*.rbf 2>/dev/null | grep -q .; then
-       echo "H264 core not found: copy H264_*.rbf to MiSTer_moonlight/core on the SD"
+  *) if ! ls /media/fat/MiSTer_moonlight_crt/core/H264_*.rbf /media/fat/_Other/H264_*.rbf 2>/dev/null | grep -q .; then
+       echo "H264 core not found: copy H264_*.rbf to MiSTer_moonlight_crt/core on the SD"
        exit 1
      fi ;;
 esac
 # an instance left running (it should not happen: the client exits when the core changes) is closed
-if pidof mister_moonlight >/dev/null; then
-  echo "MiSTer Moonlight was still running: closing it"
-  killall mister_moonlight 2>/dev/null
-  for i in 1 2 3; do pidof mister_moonlight >/dev/null || break; sleep 1; done
-  pidof mister_moonlight >/dev/null && killall -9 mister_moonlight 2>/dev/null
+if pidof mister_moonlight_crt >/dev/null; then
+  echo "MiSTer Moonlight CRT was still running: closing it"
+  killall mister_moonlight_crt 2>/dev/null
+  for i in 1 2 3; do pidof mister_moonlight_crt >/dev/null || break; sleep 1; done
+  pidof mister_moonlight_crt >/dev/null && killall -9 mister_moonlight_crt 2>/dev/null
 fi
 # Wi-Fi power saving makes the network pauses worse: it is turned off
 for W in /sys/class/net/wlan*; do
@@ -38,7 +38,7 @@ LOG=$D/last_stream.log
 # During the stream the log stays in RAM (writing to the SD can block, and wears it); it goes to
 # the SD only on exit. With LOG_EVERY=<seconds> in the configuration also during the stream (for
 # an unclean exit: the MiSTer switched off halfway), but every copy rewrites the whole file
-TMPLOG=/tmp/mister_moonlight.log
+TMPLOG=/tmp/mister_moonlight_crt.log
 LOG_EVERY=${LOG_EVERY:-${LOG_OGNI:-0}}
 NETINFO="script start: uptime $(cut -d' ' -f1 /proc/uptime) s; network: $(ip route 2>/dev/null | head -1)"
 echo "Loading the H264 core and opening Moonlight${HOST:+ ($HOST)}... log in $LOG"

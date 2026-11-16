@@ -42,11 +42,11 @@ typedef struct _SERVER_DATA {
   unsigned short httpsPort;
 } SERVER_DATA, *PSERVER_DATA;
 
-/* MiSTer Moonlight: why the last serverinfo request over HTTPS failed (empty if it worked) */
+/* MiSTer Moonlight CRT: why the last serverinfo request over HTTPS failed (empty if it worked) */
 extern char gs_https_error[160];
 
 int gs_init(PSERVER_DATA server, char* address, unsigned short httpPort, const char *keyDirectory, int logLevel, bool unsupported);
-/* (MiSTer Moonlight) mode_w/mode_h: the mode= of the launch, 0 = the stream's. With sops, Sunshine
+/* (MiSTer Moonlight CRT) mode_w/mode_h: the mode= of the launch, 0 = the stream's. With sops, Sunshine
  * sets the PC's display to it (display device "resolution: automatic"); the stream keeps its size */
 int gs_start_app(PSERVER_DATA server, PSTREAM_CONFIGURATION config, int appId, bool sops, bool localaudio, int gamepad_mask, int mode_w, int mode_h);
 int gs_applist(PSERVER_DATA server, PAPP_LIST *app_list);

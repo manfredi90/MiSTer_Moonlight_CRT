@@ -1,5 +1,5 @@
 /*
- * MiSTer Moonlight: a Moonlight client for Sunshine that runs on the MiSTer FPGA's ARM
+ * MiSTer Moonlight CRT: a Moonlight client for Sunshine that runs on the MiSTer FPGA's ARM
  * and uses the H264 core (an H.264 decoder in the FPGA) as its video and audio output,
  * with an on-screen menu to pick the app and the settings.
  *
@@ -123,8 +123,8 @@ static CONNECTION_LISTENER_CALLBACKS conn_cb = {
 /* ---------- options ---------- */
 
 static void usage(void) {
-  printf("mister_moonlight %s - Moonlight client for Sunshine with output on the MiSTer's H264 core\n\n", MG_VERSION);
-  printf("Usage: mister_moonlight <action> <host ip> [options]\n\n");
+  printf("mister_moonlight_crt %s - Moonlight client for Sunshine with output on the MiSTer's H264 core\n\n", MG_VERSION);
+  printf("Usage: mister_moonlight_crt <action> <host ip> [options]\n\n");
   printf("Actions:\n");
   printf("  menu [ip]      on-screen menu: list of PCs, Sunshine's apps, settings, pairing\n");
   printf("  stream <ip>    start streaming an app right away (-app)\n");
@@ -156,7 +156,7 @@ static void usage(void) {
   printf("  -60hz              60 Hz: the core stays at 60 Hz, no picture right at the pickup\n");
   printf("  -pcres WxH         the PC's resolution during the stream (Sunshine: resolution from the client)\n");
   printf("  -core PATH         the core to load, without date and extension (default\n"
-         "                     MiSTer_moonlight/core/H264, otherwise _Other/H264)\n\n");
+         "                     MiSTer_moonlight_crt/core/H264, otherwise _Other/H264)\n\n");
   printf("During the stream: Select+Start+LB+RB or Ctrl+Alt+Shift+Q go back to the menu,\n");
   printf("Select+Start = Guide button, Start held 1 s = mouse mode.\n");
 }
@@ -445,7 +445,7 @@ int main(int argc, char **argv) {
   signal(SIGTERM, on_signal);
   signal(SIGPIPE, SIG_IGN);
 
-  printf("mister_moonlight %s\n", MG_VERSION);
+  printf("mister_moonlight_crt %s\n", MG_VERSION);
   if (!strcmp(o.action, "play"))
     return do_play(&o);
 
@@ -495,7 +495,7 @@ int main(int argc, char **argv) {
     return 0;
   }
   if (!server.paired) {
-    fprintf(stderr, "Pair the MiSTer first: mister_moonlight pair %s\n", o.host);
+    fprintf(stderr, "Pair the MiSTer first: mister_moonlight_crt pair %s\n", o.host);
     return 1;
   }
   if (!strcmp(o.action, "list")) {

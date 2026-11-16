@@ -11,7 +11,7 @@ struct h264ring;
  * opens a session that stays open for the whole run: the menu needs it too, since
  * the core shows the overlay only during a session. */
 int  mg_core_open(void (*on_gone)(void), void (*on_refused)(const char *why));
-/* The core file to load, without date and extension (default: MiSTer_moonlight/core/H264
+/* The core file to load, without date and extension (default: MiSTer_moonlight_crt/core/H264
  * if present, otherwise _Other/H264) */
 void mg_core_set_rbf(const char *rbf);
 /* For the tests: attaches to a ring that is already set up (a fake core in memory) */

@@ -462,12 +462,12 @@ static void item_label(const item *it, char *label, size_t ln, char *value, size
 
 static void draw_frame(const char *footer) {
   fill(0, 0, W, H, C_BG);
-  text(X0, Y0, "MOONLIGHT", C_HEAD);
+  text(X0, Y0, "MOONLIGHT CRT", C_HEAD);
   const char *who = state == ST_PCS || state == ST_EDIT ? "PCs with Sunshine"
                   : state == ST_PCOPT && ed_pc >= 0 && ed_pc < n_pcs ? pcs[ed_pc].host
                   : cur_pc >= 0 && cur_pc < n_pcs ? pcs[cur_pc].name : host_buf;
   char wb[40];
-  snprintf(wb, sizeof(wb), "%.*s", COLS - 11, who);
+  snprintf(wb, sizeof(wb), "%.*s", COLS - 15, who);
   text_right(W - X0, Y0, wb, C_DIM);
   fill(X0, Y0 + 12, W - 2 * X0, 1, C_LINE);
   fill(X0, H - Y0 - 12, W - 2 * X0, 1, C_LINE);

@@ -862,7 +862,7 @@ int h264ring_set_atten(h264ring *r, unsigned half_db)
     return 0;
 }
 
-/* (MiSTer Moonlight, interface mm 1.5) the genlock: word 34's GL_EN [24] and GL_TRIM [23:16] (lines
+/* (MiSTer Moonlight CRT, interface mm 1.5) the genlock: word 34's GL_EN [24] and GL_TRIM [23:16] (lines
  * per 64 refreshes, signed). A core without it refuses the whole word (CTL_ERR): clear it again with
  * en = 0. Kept in r->ctl, so a new session re-writes it like the pause and the volume. */
 int h264ring_set_genlock(h264ring *r, int en, int trim)
@@ -874,7 +874,7 @@ int h264ring_set_genlock(h264ring *r, int en, int trim)
     return 0;
 }
 
-/* (MiSTer Moonlight, interface mm 1.5) GL_LAG [25]: with the genlock, the core keeps one decoded
+/* (MiSTer Moonlight CRT, interface mm 1.5) GL_LAG [25]: with the genlock, the core keeps one decoded
  * picture in reserve (it drops the head only when two wait behind it). Kept in r->ctl too. */
 int h264ring_set_gl_lag(h264ring *r, int on)
 {

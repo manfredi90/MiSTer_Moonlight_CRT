@@ -1,5 +1,5 @@
 #!/bin/bash
-# Builds MiSTer Moonlight for the MiSTer's ARM, runs the test with the fake core
+# Builds MiSTer Moonlight CRT for the MiSTer's ARM, runs the test with the fake core
 # (with qemu-arm, if present) and packs the zip to copy to the SD.
 # Usage: scripts/build.sh [work folder]   (default: ./work)
 set -euo pipefail
@@ -23,12 +23,12 @@ fi
 
 VER=$(sed -n 's/^#define MG_VERSION "\(.*\)"/\1/p' "$CLIENT/src/main.c")
 PKG=$WORK/pkg
-rm -rf "$PKG" && mkdir -p "$PKG/Scripts" "$PKG/MiSTer_moonlight/core"
+rm -rf "$PKG" && mkdir -p "$PKG/Scripts" "$PKG/MiSTer_moonlight_crt/core"
 cp "$CLIENT"/dist/Scripts/*.sh "$PKG/Scripts/"
-cp "$CLIENT"/dist/MiSTer_moonlight/* "$PKG/MiSTer_moonlight/"
-cp "$WORK/build/mister_moonlight" "$PKG/MiSTer_moonlight/"
-cp "$CLIENT/../README.md" "$PKG/MiSTer_moonlight/" 2>/dev/null || true
-# the H264 core goes in MiSTer_moonlight/core (from the core build: H264_<date>.rbf)
-touch "$PKG/MiSTer_moonlight/core/.keep"
-(cd "$PKG" && rm -f "$WORK/MiSTer_moonlight-$VER.zip" && zip -qr "$WORK/MiSTer_moonlight-$VER.zip" .)
-echo "Ready: $WORK/MiSTer_moonlight-$VER.zip"
+cp "$CLIENT"/dist/MiSTer_moonlight_crt/* "$PKG/MiSTer_moonlight_crt/"
+cp "$WORK/build/mister_moonlight_crt" "$PKG/MiSTer_moonlight_crt/"
+cp "$CLIENT/../README.md" "$PKG/MiSTer_moonlight_crt/" 2>/dev/null || true
+# the H264 core goes in MiSTer_moonlight_crt/core (from the core build: H264_<date>.rbf)
+touch "$PKG/MiSTer_moonlight_crt/core/.keep"
+(cd "$PKG" && rm -f "$WORK/MiSTer_Moonlight_CRT-$VER.zip" && zip -qr "$WORK/MiSTer_Moonlight_CRT-$VER.zip" .)
+echo "Ready: $WORK/MiSTer_Moonlight_CRT-$VER.zip"
