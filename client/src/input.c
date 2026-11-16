@@ -292,7 +292,7 @@ static void key_stream(unsigned ext, unsigned code, bool pressed) {
   send_key(ext, code, pressed);
   if (quit_armed && modifiers == 0) {
     quit_armed = false;
-    printf("[input] Ctrl+Alt+Shift+Q: fine dello stream\n");
+    printf("[input] Ctrl+Alt+Shift+Q: end of the stream\n");
     release_all();
     if (quit_cb) quit_cb();
   }
@@ -464,7 +464,7 @@ static void pads_stream(unsigned ms) {
     unsigned char lt = (j & H264RING_PAD_LT) ? 0xFF : 0, rt = (j & H264RING_PAD_RT) ? 0xFF : 0;
     /* Select + Start + LB + RB = close the stream */
     if ((b & (BACK_FLAG | PLAY_FLAG | LB_FLAG | RB_FLAG)) == (BACK_FLAG | PLAY_FLAG | LB_FLAG | RB_FLAG)) {
-      printf("[input] Select+Start+LB+RB: fine dello stream\n");
+      printf("[input] Select+Start+LB+RB: end of the stream\n");
       release_all();
       if (quit_cb) quit_cb();
       return;
