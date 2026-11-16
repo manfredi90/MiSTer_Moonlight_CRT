@@ -34,9 +34,6 @@ stream smooth when the PC's frame rate is not a constant 60 Hz. The stock H264 c
 `MiSTer_moonlight/mister_moonlight.conf` is created from `mister_moonlight.conf.example` on the
 first run; `HOST` there is required only with `MENU=0`.
 
-In Sunshine, leave **CAVLC** off: the core decodes CABAC; a CAVLC stream is rewritten on the
-ARM, which only keeps up at low bitrates.
-
 ## Controls
 
 | | |
