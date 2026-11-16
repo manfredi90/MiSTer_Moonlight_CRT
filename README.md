@@ -25,9 +25,7 @@ stream smooth when the PC's frame rate is not a constant 60 Hz. The stock H264 c
 ## Install
 
 1. Copy the release zip's `Scripts` and `MiSTer_moonlight` folders to the root of the SD card
-   (`/media/fat`). The zip includes the H264 core, in `MiSTer_moonlight/core`: it lives with
-   Moonlight, not in `_Other`, because loaded on its own from the MiSTer's menu it would only show
-   a black screen (`_Other/H264` is still used when `MiSTer_moonlight/core` is empty).
+   (`/media/fat`). The zip includes the H264 core, in `MiSTer_moonlight/core`.
 2. Run **Scripts → mister_moonlight**: the list of PCs opens. Choose *+ Add PC* and type the IP
    address of the PC with Sunshine (on-screen keyboard with the pad, or a real keyboard), then a
    name. If `mister_moonlight.conf` has `HOST=...`, that PC enters the list by itself.
