@@ -3,7 +3,7 @@
 A [Moonlight](https://moonlight-stream.org) client for [Sunshine](https://github.com/LizardByte/Sunshine)
 that runs on the MiSTer FPGA's ARM and plays the stream through a modified version of the
 amazing [H264 core](https://github.com/owenb321/MiSTer_h264_decoder), which decodes H.264 in the FPGA.
-It is aimed at CRTs. The modified core (in `core/`) adds 240p output, a 640-square-pixel picture
+It is aimed at CRTs (15 kHz or 31 kHz). The modified core (in `core/`) adds 240p output, a 640-square-pixel picture
 and a genlock: the raster follows the PC's own frame rate, to cut the latency and to keep the
 stream smooth when the PC's frame rate is not a constant 60 Hz. The stock H264 core (480i at
 59.94 Hz) works too, without these.
