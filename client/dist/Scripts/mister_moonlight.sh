@@ -21,9 +21,12 @@ case " $EXTRA " in
        exit 1
      fi ;;
 esac
+# an instance left running (it should not happen: the client exits when the core changes) is closed
 if pidof mister_moonlight >/dev/null; then
-  echo "MiSTer Moonlight is already running"
-  exit 1
+  echo "MiSTer Moonlight was still running: closing it"
+  killall mister_moonlight 2>/dev/null
+  for i in 1 2 3; do pidof mister_moonlight >/dev/null || break; sleep 1; done
+  pidof mister_moonlight >/dev/null && killall -9 mister_moonlight 2>/dev/null
 fi
 # Wi-Fi power saving makes the network pauses worse: it is turned off
 for W in /sys/class/net/wlan*; do
