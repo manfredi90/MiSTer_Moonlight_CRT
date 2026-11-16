@@ -8,7 +8,7 @@ and a genlock: the raster follows the PC's own frame rate, to cut the latency an
 stream smooth when the PC's frame rate is not a constant 60 Hz. The stock H264 core (480i at
 59.94 Hz) works too, without these.
 
-- On-screen menu (drawn in the core's overlay plane): the list of PCs, Sunshine's apps, bitrate,
+- On-screen menu: the list of PCs, Sunshine's apps, bitrate,
   audio, sync, the PC's resolution, pairing with an on-screen PIN. The stream is always 640x480
   at 60 fps.
 - Sync with the PC, the core's video PLL following the PC's frame rate (see *Settings*).
