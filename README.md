@@ -12,7 +12,7 @@ stream smooth when the PC's frame rate is not a constant 60 Hz. The stock H264 c
   audio, sync, the PC's resolution, pairing with an on-screen PIN. The stream is always 640x480
   at 60 fps.
 - Sync with the PC, the core's video PLL following the PC's frame rate (see *Settings*).
-- Pads, keyboard and mouse through the core (Main keeps `/dev/input` while a core runs),
+- Pads, keyboard and mouse through the core,
   rumble on the MiSTer's pads, mouse mode on the pad.
 
 ## Layout
