@@ -88,9 +88,6 @@ In the core's OSD: *Output Mode* 15kHz (480i) or 31kHz (480p); at 15kHz, *15kHz 
 switches the stream to 240p (the menu stays at 480i; the 640x480 stream on alternate lines).
 No 50 Hz.
 
-With the original core (H264 v1.1.0) the client works too: Sunshine receives 59.94 fps and the
-menu is widened to its 720-pixel picture.
-
 ## Build
 
 On Linux (Ubuntu 24.04: `gcc-arm-linux-gnueabihf cmake ninja-build pkg-config`, plus
