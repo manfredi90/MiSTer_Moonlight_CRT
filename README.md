@@ -71,9 +71,8 @@ starts on the desktop (which sends pictures irregularly), and it is smooth from 
 the desktop to that resolution and restores its own at the end. With a 16:9 desktop the 640x480
 stream arrives letterboxed (Sunshine adds the bars); with a 4:3 resolution the picture fills the
 screen. The stream stays 640x480 (so 1280x720 is still letterboxed). It needs a recent Sunshine
-(one from a few months before November 2026 did not change the resolution) with **Advanced
-Display Options > Resolution: "Use resolution provided by the client"**; the PC's monitor (or a
-virtual display) must accept the resolution. On the command line: `-pcres 1024x768`.
+with **Advanced Display Options > Resolution: "Use resolution provided by the client"**; the PC's
+monitor (or a virtual display) must accept the resolution.
 
 The log is `MiSTer_moonlight/last_stream.log`, written to the SD when the program exits. With
 `-stats` in `EXTRA` it also reports every 10 s the PC's frame rate and the repeated or dropped
