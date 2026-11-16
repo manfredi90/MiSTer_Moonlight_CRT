@@ -57,7 +57,7 @@ PC's resolution. The choices are kept in `MiSTer_moonlight/menu.cfg`, with the l
   The reserve covers the large pictures of high bitrates (above ~20 KB a picture takes the core
   more than a frame to decode) and the irregular arrivals of a Wi-Fi link.
 - *genlock low latency*: the same without the reserve, about 10 ms less latency. Best at
-  5 Mbps or less on a cable: at higher bitrates the large pictures arrive late and the previous
+  5 Mbps: at higher bitrates the large pictures arrive late and the previous
   picture is repeated.
 - *60 Hz*: the core stays at 60 Hz and a picture that would land right at the pickup goes to the
   next one (up to one more frame). Only for a PC at exactly 60 Hz: at 59.94 Hz a picture is
