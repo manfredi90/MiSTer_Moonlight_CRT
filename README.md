@@ -19,7 +19,7 @@ stream smooth when the PC's frame rate is not a constant 60 Hz. The stock H264 c
 
 | Folder | What |
 | --- | --- |
-| `client/` | the program (C, cross-compiled for the Cortex-A9, static) |
+| `client/` | the Moonlight client |
 | `core/` | a build of the H264 core: 640-pixel picture, 240p output, genlock |
 
 ## Install
