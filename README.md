@@ -67,8 +67,6 @@ With either genlock, during the first minute of play a few frames may be repeate
 the genlock locks on to the PC's rate: it takes longer when the PC is at 59.94 Hz and the stream
 starts on the desktop (which sends pictures irregularly), and it is smooth from then on.
 
-If the genlock does not work (a core without it), the menu says so at the stream's end.
-
 **PC resolution** (off, 640x480, 1024x768, 1280x960, 1280x720): during the stream Sunshine sets
 the desktop to that resolution and restores its own at the end. With a 16:9 desktop the 640x480
 stream arrives letterboxed (Sunshine adds the bars); with a 4:3 resolution the picture fills the
