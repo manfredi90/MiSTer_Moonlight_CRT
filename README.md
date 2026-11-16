@@ -48,6 +48,9 @@ first run; `HOST` there is required only with `MENU=0`.
 | Guide | Select+Start, or *Send Home to the program* in the MiSTer OSD |
 | Mouse mode | hold Start alone for 1 s (a short rumble confirms): left stick or d-pad = pointer, right stick = wheel, A/B/X = left/right/middle button |
 
+If the buttons or the key combinations don't work as expected (for example the combination to go
+back to the menu), define the pad's buttons from the core's OSD, as with any other MiSTer core.
+
 ## Settings
 
 In the menu: bitrate (up to 10 Mbps; auto = 10 Mbps with *genlock*, 5 Mbps with *genlock low latency*
