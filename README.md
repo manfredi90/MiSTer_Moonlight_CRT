@@ -14,6 +14,9 @@ stream smooth when the PC's frame rate is not a constant 60 Hz. The stock H264 c
 - Pads, keyboard and mouse through the core,
   rumble on the MiSTer's pads, mouse mode on the pad.
 
+> **Unofficial, experimental and AI-assisted.** This project was made with the help of AI: the
+> code was written together with Claude. Use at your own risk.
+
 | The list of PCs | The apps and the settings |
 | --- | --- |
 | ![The list of PCs](docs/menu_pcs.png) | ![The apps and the settings](docs/menu_settings.png) |
