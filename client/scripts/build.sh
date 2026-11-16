@@ -27,7 +27,6 @@ rm -rf "$PKG" && mkdir -p "$PKG/Scripts" "$PKG/MiSTer_moonlight_crt/core"
 cp "$CLIENT"/dist/Scripts/*.sh "$PKG/Scripts/"
 cp "$CLIENT"/dist/MiSTer_moonlight_crt/* "$PKG/MiSTer_moonlight_crt/"
 cp "$WORK/build/mister_moonlight_crt" "$PKG/MiSTer_moonlight_crt/"
-cp "$CLIENT/../README.md" "$PKG/MiSTer_moonlight_crt/" 2>/dev/null || true
 # the H264 core goes in MiSTer_moonlight_crt/core (from the core build: H264_<date>.rbf)
 touch "$PKG/MiSTer_moonlight_crt/core/.keep"
 (cd "$PKG" && rm -f "$WORK/MiSTer_Moonlight_CRT-$VER.zip" && zip -qr "$WORK/MiSTer_Moonlight_CRT-$VER.zip" .)
