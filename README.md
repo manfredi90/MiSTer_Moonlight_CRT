@@ -96,6 +96,8 @@ horizontal scaling. Without the genlock it runs at exactly 60.000 Hz; with it, a
 
 In the core's OSD: *Output Mode* 15kHz (480i) or 31kHz (480p); at 15kHz, *15kHz Mode* 240p
 switches the stream to 240p (the menu stays at 480i; the 640x480 stream on alternate lines).
+At 15kHz, *H Position* and *V Position* move the picture on the screen (at 31kHz, use the
+monitor's own controls); they don't affect the genlock and can be changed during the stream.
 No 50 Hz.
 
 ## Build

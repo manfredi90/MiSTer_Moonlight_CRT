@@ -18,6 +18,11 @@ Changes here:
   genlock, the PC's rate with it). Output Mode
   is 15kHz (480i) or 31kHz (480p); at 15kHz, 15kHz Mode 240p (upstream's 240p Playback) switches a
   playing stream to 240p. HDMI still gets the picture through the MiSTer scaler.
+- **H Position, V Position (mm-0.4.2, 15kHz only).** The picture moves on the screen by moving the
+  syncs, as arcade cores do (`h264/sync_gen.sv`): H 4 pixels a step (-8..+7), V a line a step
+  (-8..+7), the composite sync's vertical block with it. The lines and the frame never change, so
+  the reader, the display's grid and the genlock are untouched. Where a moved sync lands on the
+  picture, those pixels are blanked (the edge that leaves the screen).
 - No *Deinterlace* entry: it only applies to field-coded streams, which Sunshine never sends (the
   field path stays, at Weave). No *HDMI Deinterlace* entry either (mm-0.4.1): the scaler weaves 480i;
   for HDMI, Output Mode 31kHz.

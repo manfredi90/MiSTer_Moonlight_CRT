@@ -231,7 +231,7 @@ assign LOCKED    = locked & vid_locked;
 //     stock Main truncates the About line at 30 chars and splits CONF_STR on , and ;.
 //   * This string is INSIDE CONF_STR = inside the netlist, so changing it re-rolls the
 //     fit. Set it before the build that will ship, not after.
-`define CORE_VERSION "mm-0.4.1"
+`define CORE_VERSION "mm-0.4.2"
 
 // The OSD definition. Every option, button and file extension here MUST be documented
 // in the manual: tools/docs_check.py parses this block (by its terminator, never a
@@ -260,11 +260,16 @@ assign LOCKED    = locked & vid_locked;
 // [26] free (reserved), and [28:27] refresh-match mode. CONF_STR stays at v1 so existing
 // HPS values remain intact; the new profile defaults to 480i60.
 // Status bit 30 disables gradient dithering; zero defaults to On.
+// (mm-0.4.2) [34:31] H Position and [38:35] V Position: the picture on a 15 kHz raster (h264/
+// sync_gen.sv), signed 4-bit, 0 = the standard place (status 0), so the lists run 0, +1 .. +7,
+// -8 .. -1; shown only on the 15 kHz profile (menu mask bit 0).
 localparam CONF_STR = {
 	"H264;;",
 	"-;",
 	"O[22:20],Output Mode,15kHz,31kHz;",
 	"D2O[24],15kHz Mode,480i,240p;",
+	"h0O[34:31],H Position,0,+1,+2,+3,+4,+5,+6,+7,-8,-7,-6,-5,-4,-3,-2,-1;",
+	"h0O[38:35],V Position,0,+1,+2,+3,+4,+5,+6,+7,-8,-7,-6,-5,-4,-3,-2,-1;",
 	"O[2],Display Shape,4:3,16:9;",
 	"O[29],De-flicker,On,Off;",
 	"O[30],Gradient Dither,On,Off;",
@@ -729,6 +734,9 @@ wire  [2:0] v_fit_hpf, v_fit_vpf;        // ... (§11b) the pre-filters
 wire        v_sess, v_at_en, v_idle_vis;  // ... the overlay's session and anti-twitter, the idle screen
 wire [11:0] h_pos, v_pos;
 wire        pixel_en, h_sync, v_sync, h_blank, v_blank, frame_tick, field, ce_pix;
+wire  [3:0] v_pos_h, v_pos_v;             // ... (mm-0.4.2) the OSD's H / V Position (15 kHz)
+wire  [3:0] sg_pos_v;                     // ... V Position as sync_gen runs this frame (csync's block)
+wire        sg_crop;                      // ... the dots under a moved sync (vid_out blanks them)
 wire        sg_mode_il;                   // the mode sync_gen ran its frame in (frame0's tag)
 wire        sg_mode_240p;
 wire  [1:0] sg_mode_std;
@@ -755,6 +763,10 @@ sync_gen sync_gen_inst (
 	.g_l        (v_l),
 	.g_nt       (v_nt),
 	.g_last     (v_last),
+	.pos_h      (v_pos_h),            // (mm-0.4.2) the picture's position on the 15 kHz raster
+	.pos_v      (v_pos_v),
+	.pos_v_q    (sg_pos_v),
+	.crop       (sg_crop),
 	.lines      (rast_lines),
 	.last_line  (rast_last),
 	.h_pos      (h_pos),
@@ -1662,7 +1674,7 @@ assign raster_pal     = raster_std[1];
 // at a frame's first dot, the deinterlace mode / the overlay's settings at a refresh's first line --
 // all long after the copy has settled.
 localparam int XW_DN = 1 + 1 + 1 + 2 + 1 + 5*12 + 1 + 5 + 1 + 8 + 8 + 1 + 1 + 2 + 3 +
-                       13 + 13 + 14 + 14 + 28 + 28 + 2 + 2 + 12 + 12 + 12 + 12 + 3 + 3 + 1 + 1 + 1 + 6 + 1 + 4*12 + 1 + 8;
+                       13 + 13 + 14 + 14 + 28 + 28 + 2 + 2 + 12 + 12 + 12 + 12 + 3 + 3 + 1 + 1 + 1 + 6 + 1 + 4*12 + 1 + 8 + 8;
 wire [XW_DN-1:0] xdn_src = {raster_il_eff, prog240_eff, raster_pal, raster_std,
                             geom_nat, geom_rw, geom_rh, geom_l, geom_nt, geom_last,
                             sh_valid, sh_store, sh_field, sh_w, sh_hf, sh_parity, sh_single, 2'b00 /* Weave: no Deinterlace entry */, sh_colour,
@@ -1670,7 +1682,8 @@ wire [XW_DN-1:0] xdn_src = {raster_il_eff, prog240_eff, raster_pal, raster_std,
                             fit_lx, fit_ty, fit_wc, fit_hc, fit_hpf, fit_vpf,
                             rr_sess, at_sel, idle_vis, sh_siting,
                             fit_clip_en, fit_clip_x, fit_clip_y, fit_clip_w, fit_clip_h,
-                            ctl_gl_en, ctl_gl_trim};
+                            ctl_gl_en, ctl_gl_trim,
+                            status[38:35], status[34:31]};   // (mm-0.4.2) the 15 kHz position, V and H
 wire [XW_DN-1:0] xdn_dst;
 assign {v_il, v_prog240, v_pal, v_std,
         v_nat, v_rw, v_rh, v_l, v_nt, v_last,
@@ -1679,7 +1692,8 @@ assign {v_il, v_prog240, v_pal, v_std,
         v_fit_lx, v_fit_ty, v_fit_wc, v_fit_hc, v_fit_hpf, v_fit_vpf,
         v_sess, v_at_en, v_idle_vis, v_siting,
         v_clip_en, v_clip_x, v_clip_y, v_clip_w, v_clip_h,
-        v_gl_en, v_gl_trim} = xdn_dst;
+        v_gl_en, v_gl_trim,
+        v_pos_v, v_pos_h} = xdn_dst;
 cdc_snap #(.W(XW_DN)) raster_dn_xing (
 	.src_clk   (clk_sys),
 	.src_rst_n (lock_sys_n),
@@ -1737,6 +1751,8 @@ vid_out vid_out_inst (
 	.h_sync   (h_sync),
 	.v_sync   (v_sync),
 	.pixel_en (pixel_en),
+	.crop     (sg_crop),              // (mm-0.4.2) the 15 kHz position
+	.pos_v    (sg_pos_v),
 	.ce_pix   (ce_pix),
 	.field    (field),
 	.v_pos    (v_pos),

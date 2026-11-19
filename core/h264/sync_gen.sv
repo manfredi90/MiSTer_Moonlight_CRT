@@ -26,6 +26,17 @@
 // re-anchors its grid at every refresh while gl_en). Off (and the accumulator cleared) without
 // gl_en, and at a mode change: then the raster is exactly the 60.000 Hz one below.
 //
+// THE POSITION (mm-0.4.2, 15 kHz only: the 480i and 240p rasters): pos_h / pos_v move the picture on
+// the screen the way an arcade core does, by moving the syncs and never the counters -- the lines,
+// the frame and frame_tick stay where they are, so the reader, disp_ctl's grid and the genlock never
+// see it. pos_h, signed, 8 dots (4 pixels) a step, + to the right: the hsync [1312, 1436) moves
+// earlier by 8 * pos_h (at -8 it ends at 1500, 75 dots before the line's end). pos_v, signed, a line a
+// step, + down: the vertical sync window [244, 247) and csync_smpte's block (lines 241-249, via
+// pos_v_q) move up by pos_v lines (at -8 the block ends at line 257). Where a sync lands on the
+// picture -- the hsync within 16 dots of an active dot, the block on an active line -- `crop` blanks
+// those dots (vid_out masks the colour; DE is untouched), the edge that leaves the screen anyway.
+// Both are taken at a frame's first dot (a field's at 480i) and are 0 at 31 kHz.
+//
 // Inherited verbatim from MiSTer_UMD_Video (umd/sync_gen.sv). It keeps MiSTer_DVD's
 // syncgen coordinate convention, which every overlay and display module harvested from
 // those projects consumes:
@@ -118,6 +129,11 @@ module sync_gen (
     input  wire [11:0] g_l,
     input  wire [11:0] g_nt,
     input  wire [11:0] g_last,
+    // (mm-0.4.2) the picture's position on a 15 kHz raster (the OSD; 0 = the standard one)
+    input  wire  [3:0] pos_h,        // signed, 4 pixels a step, + right
+    input  wire  [3:0] pos_v,        // signed, a line a step, + down
+    output reg   [3:0] pos_v_q,      // ... pos_v as this frame runs it (csync_smpte's block)
+    output reg         crop,         // the dot is under a moved sync: its colour is blanked
     output reg  [11:0] lines,        // the current frame's active lines (progressive: 480 / 576 / g_h)
     output reg  [11:0] last_line,    // ... its last line's index (524 / 624 / g_nt - 1)
 
@@ -168,6 +184,7 @@ reg [11:0] gw_q, gh_q, gl_q, gnt_q, glast_q;
 reg        nat_go;  // the native frame has begun on a tick (every clock a dot from then)
 reg signed [8:0] gl_acc;                                 // (mm 1.5) the genlock's sigma-delta
 reg        gl_done;                                      // ... this refresh's line decided
+reg  [3:0] pos_h_q;                                      // (mm-0.4.2) the position this frame runs
 assign dot = clk_en | (nat_q & nat_go);
 always @(posedge clk or negedge rst_n)
     if (!rst_n)       nat_go <= 1'b0;
@@ -175,6 +192,9 @@ always @(posedge clk or negedge rst_n)
     else if (clk_en)  nat_go <= 1'b1;
 
 wire        pal   = 1'b0;                                 // MiSTer Moonlight: 60.000 Hz only
+// (mm-0.4.2) benches that omit the position ports: the standard place
+wire [3:0]  pos_h_i = {pos_h[3] === 1'b1, pos_h[2] === 1'b1, pos_h[1] === 1'b1, pos_h[0] === 1'b1};
+wire [3:0]  pos_v_i = {pos_v[3] === 1'b1, pos_v[2] === 1'b1, pos_v[1] === 1'b1, pos_v[0] === 1'b1};
 wire        s60   = 1'b0;
 wire        p240_req = (prog240 === 1'b1); // tolerate older named-port benches that omit this new input
 wire [11:0] p240_lines = pal ? 12'd312 : 12'd262;
@@ -215,6 +235,7 @@ always @(posedge clk or negedge rst_n) begin
         m7 <= 3'd0;
         nat_q <= 1'b0; gw_q <= '0; gh_q <= '0; gl_q <= '0; gnt_q <= '0; glast_q <= '0;
         gl_acc <= 9'sd0; gl_done <= 1'b0;
+        pos_h_q <= 4'd0; pos_v_q <= 4'd0;
     end else if (dot) begin
         if (mode_chg) begin
             gl_acc <= 9'sd0; gl_done <= 1'b0;
@@ -227,6 +248,8 @@ always @(posedge clk or negedge rst_n) begin
             odd_field <= 1'b1;
             m7 <= 3'd0;
             nat_q <= nat_in; gw_q <= g_w; gh_q <= g_h; gl_q <= g_l; gnt_q <= g_nt; glast_q <= g_last;
+            pos_h_q <= (interlaced | p240_req) ? pos_h_i : 4'd0;
+            pos_v_q <= (interlaced | p240_req) ? pos_v_i : 4'd0;
         end else begin
             h_cnt <= h_last ? 12'd0 : h_cnt + 12'd1;
             if (h_last) begin
@@ -243,6 +266,11 @@ always @(posedge clk or negedge rst_n) begin
                     nat_q <= nat_in; gw_q <= g_w; gh_q <= g_h; gl_q <= g_l; gnt_q <= g_nt; glast_q <= g_last;
                 end
                 if (v_last && il_q) odd_field <= ~odd_field;
+                // (mm-0.4.2) the position, taken where a frame (a field) begins
+                if (v_last) begin
+                    pos_h_q <= (il_q | p240_q) ? pos_h_i : 4'd0;
+                    pos_v_q <= (il_q | p240_q) ? pos_v_i : 4'd0;
+                end
                 // the frame line count mod 7, from each frame's (the top field's) first line
                 m7 <= (v_last && (!il_q || !odd_field)) ? 3'd0 : (m7 == 3'd6) ? 3'd0 : m7 + 3'd1;
             end
@@ -255,7 +283,16 @@ wire h_act  = (il_q | p240_q) ? (h_cnt < IH_ACTIVE) : nat_q ? (h_cnt < gw_q) : (
 wire v_act  = il_q ? (v_cnt < (pal ? IV_ACT_P : IV_ACT_N)) : p240_q ? (v_cnt < (pal ? IV_ACT_P : IV_ACT_N)) : nat_q ? (v_cnt < gh_q) : (v_cnt < (pal ? V_ACT_P : V_ACT_N));
 wire [11:0] hs_s = pal ? H_SS_P : H_SS_N;
 wire [11:0] hs_e = pal ? H_SE_P : H_SE_N;
-wire hs_now = (il_q | p240_q) ? ((h_cnt >= {hs_s[10:0], 1'b0}) && (h_cnt < {hs_e[10:0], 1'b0}))
+// (mm-0.4.2) the 15 kHz syncs, moved by the position: 8 dots a pos_h step (earlier = right), a line a
+// pos_v step (earlier = down); 0 gives the standard [1312, 1436) and [244, 247)
+wire [11:0] ph_dots = {{5{pos_h_q[3]}}, pos_h_q, 3'b000};
+wire [11:0] pv_lns  = {{8{pos_v_q[3]}}, pos_v_q};
+wire [11:0] hs_s15  = {hs_s[10:0], 1'b0} - ph_dots;
+wire [11:0] hs_e15  = {hs_e[10:0], 1'b0} - ph_dots;
+wire [11:0] ivs_s   = (pal ? IV_VS_P : IV_VS_N) - pv_lns;
+wire [11:0] ive_s   = (pal ? IV_VE_P : IV_VE_N) - pv_lns;
+wire        crop_now = (il_q | p240_q) && ((h_cnt >= hs_s15 - 12'd16) || (v_cnt >= 12'd241 - pv_lns));
+wire hs_now = (il_q | p240_q) ? ((h_cnt >= hs_s15) && (h_cnt < hs_e15))
             : nat_q ? ((h_cnt >= h_tot - 12'd14) && (h_cnt < h_tot - 12'd6))
                     : ((h_cnt >= hs_s) && (h_cnt < hs_e));
 wire vs_now = nat_q ? ((v_cnt >= gh_q + 12'd2) && (v_cnt < gh_q + 12'd5)) :
@@ -263,7 +300,7 @@ wire vs_now = nat_q ? ((v_cnt >= gh_q + 12'd2) && (v_cnt < gh_q + 12'd5)) :
 // interlaced vsync: the window sampled at the field's reference dot (dot 0 on field 1,
 // the half-line on the other) -- DVD's "CRT vsync sampler"
 wire [11:0] vs_ref  = field1 ? 12'd0 : (pal ? H_TOT_P : H_TOT_N);
-wire        vs_win  = pal ? ((v_cnt >= IV_VS_P) && (v_cnt < IV_VE_P)) : ((v_cnt >= IV_VS_N) && (v_cnt < IV_VE_N));
+wire        vs_win  = (v_cnt >= ivs_s) && (v_cnt < ive_s);
 wire        vs_il_n = (h_cnt == vs_ref) ? vs_win : vs_il;
 
 always @(posedge clk or negedge rst_n) begin
@@ -273,11 +310,13 @@ always @(posedge clk or negedge rst_n) begin
         h_blank <= 1'b1; v_blank <= 1'b1; frame_tick <= 1'b0; field <= 1'b0; ce_pix <= 1'b1;
         vs_il <= 1'b0; lines <= 12'd480; last_line <= 12'd524;
         mode_il <= 1'b0; mode_std <= 2'd0; mode_240p <= 1'b0;
+        crop <= 1'b0;
     end else if (dot) begin
         vs_il      <= il_q ? vs_il_n : 1'b0;
         h_pos      <= h_cnt;
         v_pos      <= il_q ? {v_cnt[10:0], ~odd_field} : v_cnt;
         pixel_en   <= h_act & v_act;
+        crop       <= crop_now;
         h_sync     <= hs_now;
         v_sync     <= il_q ? vs_il_n : p240_q ? vs_win : vs_now;
         h_blank    <= ~h_act;

@@ -35,6 +35,8 @@ module vid_out (
     input  wire        h_sync,
     input  wire        v_sync,
     input  wire        pixel_en,
+    input  wire        crop,               // (mm-0.4.2) under a moved 15 kHz sync: blank the colour
+    input  wire  [3:0] pos_v,              // ... and the position the raster runs (csync's block)
     input  wire        ce_pix,             // 480i: the pixel-repetition phase
     input  wire        field,
     input  wire [11:0] v_pos,
@@ -82,11 +84,12 @@ always @(posedge clk) if (ce) begin
 	idle_rg_q6 <= idle_rg_q5;       idle_b_q6 <= idle_b_q5;
 	idle_rg_q7 <= idle_rg_q6;       idle_b_q7 <= idle_b_q6;
 end
-reg [10:0] hs_dly, vs_dly, de_dly, ce_dly, f1_dly;
+reg [10:0] hs_dly, vs_dly, de_dly, ce_dly, f1_dly, cr_dly;
 always @(posedge clk) if (ce) begin
 	hs_dly <= {hs_dly[9:0], h_sync};
 	vs_dly <= {vs_dly[9:0], v_sync};
 	de_dly <= {de_dly[9:0], pixel_en};    // the raster's active area, LAT 12 like hs / vs
+	cr_dly <= {cr_dly[9:0], crop === 1'b1}; // (mm-0.4.2) the blanked dots, with DE (benches without it: none)
 	ce_dly <= {ce_dly[9:0], ce_pix};      // 480i: the pixel-repetition phase, with the dots
 	f1_dly <= {f1_dly[9:0], field};       // 480i: the field (VGA_F1), with its lines
 end
@@ -120,9 +123,9 @@ ovl_blend #(.PIPE(LAT_BLEND)) ovl_blend_inst (
 
 always @(posedge clk) begin
 	if (ce) begin
-		vga_r  <= ob_r;
-		vga_g  <= ob_g;
-		vga_b  <= ob_b;
+		vga_r  <= cr_dly[10] ? 8'd0 : ob_r;
+		vga_g  <= cr_dly[10] ? 8'd0 : ob_g;
+		vga_b  <= cr_dly[10] ? 8'd0 : ob_b;
 		vga_hs <= hs_dly[10];
 		vga_vs <= vs_dly[10];
 		vga_de <= de_dly[10];
@@ -142,6 +145,7 @@ csync_smpte csync_smpte_inst (
 	.pal    (pal),                    // P6 step 6: BT.470's 5 / 5 / 5 block on the 576i raster
 	.h_sync (hs_dly[10]),
 	.v_pos  (v_pos),                  // {field line, parity}: chooses the block's line only
+	.pos_v  (pos_v),                  // (mm-0.4.2) the position: the block's line moves with it
 	.cs     (cs),
 	.cs_en  (cs_en)
 );

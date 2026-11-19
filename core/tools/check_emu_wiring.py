@@ -561,7 +561,8 @@ def main():
                         or not mo or mo.group(1) != 'ovl_pr':
                     bad('ovl_blend', 'must take the selection (sel_r_q) and the overlay plane\'s pixel one register '
                                      'after it (ovl_r_q <= ovl_pr)')
-                mm = re.search(r'\bvga_r\s*<=\s*(\w+)\s*;', vsrc)
+                # (mm-0.4.2) the colour may be blanked under a moved 15 kHz sync: vga_r <= cr_dly[10] ? 0 : r
+                mm = re.search(r'\bvga_r\s*<=\s*(?:cr_dly\[10\]\s*\?\s*8\'d0\s*:\s*)?(\w+)\s*;', vsrc)
                 if not mm or not ob or terms(ob.get('r', '')) != {mm.group(1)}:
                     bad('vga_r_q', 'must be ovl_blend\'s r (the overlay composited over the video)')
         # the idle screen yields to a shown picture: stream_live is the display's own flag

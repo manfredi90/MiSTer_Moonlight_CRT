@@ -116,6 +116,7 @@ module csync_smpte (
 
     input  wire        h_sync,     // the EMITTED hsync (core_h_sync), active high
     input  wire [11:0] v_pos,      // {line within field, raster field parity}
+    input  wire  [3:0] pos_v,      // (mm-0.4.2) the picture's position, signed lines, + down: the block moves up
 
     output reg         cs,         // composite sync, 1 = sync tip
     output wire        cs_en       // 1 => sys_top must use `cs` instead of stock
@@ -137,7 +138,8 @@ localparam [3:0]  SEG_N   = 4'd6,     SEG_P   = 4'd5;      // half-lines per seg
 wire [11:0] half_w  = pal ? HALF_P : HALF_N;
 wire [11:0] eq_w    = pal ? EQ_P    : EQ_N;
 wire [11:0] broad_w = pal ? BROAD_P : BROAD_N;
-wire [11:0] vss     = pal ? VSS_P   : VSS_N;
+wire  [3:0] pos_v_i = {pos_v[3] === 1'b1, pos_v[2] === 1'b1, pos_v[1] === 1'b1, pos_v[0] === 1'b1};   // (mm-0.4.2) benches that omit it: 0
+wire [11:0] vss     = (pal ? VSS_P   : VSS_N) - {{8{pos_v_i[3]}}, pos_v_i};
 
 // Mode 1 (2H) keeps today's three-line vertical sync window and adds no equalizing
 // pulses: it is the SAME generator with the two outer segments set to zero.
