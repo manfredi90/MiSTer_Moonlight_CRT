@@ -25,7 +25,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: client/work/deps
-          key: deps-${{ runner.os }}-${{ hashFiles('client/scripts/build-deps.sh') }}
+          # the .pc files hold the absolute prefix: a new workspace path (a renamed repository) needs
+          # its own build of the dependencies
+          key: deps-${{ runner.os }}-${{ github.workspace }}-${{ hashFiles('client/scripts/build-deps.sh') }}
 
       - name: Build, test, package
         run: client/scripts/build.sh client/work
