@@ -6,6 +6,7 @@ name: core
 
 on:
   push:
+    branches: ['**']          # not on tags: publishing a release builds nothing
     paths: ['core/**', '.github/workflows/core.yml']
   workflow_dispatch:
     inputs:

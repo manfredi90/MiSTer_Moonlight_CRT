@@ -4,6 +4,7 @@ name: client
 
 on:
   push:
+    branches: ['**']          # not on tags: publishing a release builds nothing
     paths: ['client/**', '.github/workflows/client.yml']
   pull_request:
     paths: ['client/**']
